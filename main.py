@@ -77,6 +77,36 @@ client = NewClient("session.db")
 owner_jid = None
 owner_number = None
 
+# Verifica com seguranca se um sub-campo Protobuf realmente existe na mensagem
+def has_field(obj, field_name: str) -> bool:
+    try:
+        return obj is not None and obj.HasField(field_name)
+    except Exception:
+        return False
+
+# Desempacota camadas extras da mensagem apenas quando realmente existem
+def desempacotar_mensagem(msg):
+    if not msg:
+        return msg
+    for _ in range(5):
+        if has_field(msg, "deviceSentMessage") and has_field(msg.deviceSentMessage, "message"):
+            msg = msg.deviceSentMessage.message
+            continue
+        if has_field(msg, "ephemeralMessage") and has_field(msg.ephemeralMessage, "message"):
+            msg = msg.ephemeralMessage.message
+            continue
+        if has_field(msg, "viewOnceMessage") and has_field(msg.viewOnceMessage, "message"):
+            msg = msg.viewOnceMessage.message
+            continue
+        if has_field(msg, "viewOnceMessageV2") and has_field(msg.viewOnceMessageV2, "message"):
+            msg = msg.viewOnceMessageV2.message
+            continue
+        if has_field(msg, "documentWithCaptionMessage") and has_field(msg.documentWithCaptionMessage, "message"):
+            msg = msg.documentWithCaptionMessage.message
+            continue
+        break
+    return msg
+
 # Thread para leitura de comandos no terminal
 def escutar_terminal():
     while True:
@@ -110,93 +140,111 @@ def on_message(c: NewClient, message: MessageEv):
 
     msg_info = message.Info
     msg_id = msg_info.ID
-    chat = msg_info.MessageSource.Chat
-    sender = msg_info.MessageSource.Sender
-    is_group = msg_info.MessageSource.IsGroup
+    src = msg_info.MessageSource
+    chat = src.Chat
+    chat_clean = JIDToNonAD(chat)
+    sender = src.Sender
+    is_group = src.IsGroup
+
+    # Extrai o numero real do remetente (mesmo quando o WhatsApp envia LID)
     sender_number = sender.User
-
-    raw_msg = message.Message
-
-    # Desempacota se a mensagem veio do proprio celular (deviceSentMessage)
-    if hasattr(raw_msg, "deviceSentMessage") and raw_msg.deviceSentMessage and raw_msg.deviceSentMessage.message:
-        raw_msg = raw_msg.deviceSentMessage.message
-
-    # Desempacota se a mensagem veio de grupo com mensagens temporarias
-    if hasattr(raw_msg, "ephemeralMessage") and raw_msg.ephemeralMessage and raw_msg.ephemeralMessage.message:
-        raw_msg = raw_msg.ephemeralMessage.message
+    if sender.Server == "lid" and has_field(src, "SenderAlt") and src.SenderAlt.User:
+        sender_number = src.SenderAlt.User
 
     # Verifica se quem enviou foi o dono
-    is_from_me = msg_info.MessageSource.IsFromMe or (owner_number and sender_number == owner_number)
+    is_device_sent = has_field(message.Message, "deviceSentMessage")
+    is_from_me = src.IsFromMe or is_device_sent or (owner_number and sender_number == owner_number)
 
-    # 1. Anti-delete: captura evento de mensagem apagada (REVOKE = type 0)
-    protocol_msg = getattr(raw_msg, "protocolMessage", None)
-    if protocol_msg and protocol_msg.type == 0 and protocol_msg.key and protocol_msg.key.ID:
-        revoked_id = protocol_msg.key.ID
-        if revoked_id in message_cache:
-            deleted_info = message_cache[revoked_id]
-            author = deleted_info["sender_number"]
-            where = deleted_info["chat_name"]
-            content = deleted_info["text"]
-            media_path = deleted_info.get("media_path")
+    raw_msg = desempacotar_mensagem(message.Message)
 
-            print(f"[Anti-Delete] Mensagem apagada por +{author} resgatada do cache.")
+    # 1. Anti-delete: verifica se a mensagem realmente possui um protocolMessage
+    if has_field(raw_msg, "protocolMessage"):
+        protocol_msg = raw_msg.protocolMessage
+        if protocol_msg.type == 0 and has_field(protocol_msg, "key") and protocol_msg.key.ID:
+            revoked_id = protocol_msg.key.ID
+            if revoked_id in message_cache:
+                deleted_info = message_cache[revoked_id]
+                author = deleted_info["sender_number"]
+                pushname = deleted_info.get("pushname", "")
+                where = deleted_info["chat_name"]
+                content = deleted_info["text"]
+                media_path = deleted_info.get("media_path")
 
-            alerta = (
-                "Mensagem apagada detectada:\n"
-                f"De: +{author}\n"
-                f"Local: {where}\n"
-                f"Horario: {deleted_info['time']}\n"
-            )
-            if content:
-                alerta += f"Conteudo: {content}"
+                autor_label = f"{pushname} (+{author})" if pushname else f"+{author}"
+                print(f"[Anti-Delete] Mensagem apagada por {autor_label} em {where} resgatada do cache.")
 
-            dest = owner_jid if owner_jid else JIDToNonAD(chat)
-            try:
-                c.send_message(dest, alerta)
+                alerta = (
+                    "Mensagem apagada detectada:\n"
+                    f"De: {autor_label}\n"
+                    f"Local: {where}\n"
+                    f"Horario: {deleted_info['time']}\n"
+                )
+                if content:
+                    alerta += f"Conteudo: {content}"
 
-                if media_path and os.path.exists(media_path):
-                    c.send_message(dest, f"Midia apagada de +{author}:")
-                    if media_path.endswith((".jpg", ".png")):
-                        c.send_image(dest, media_path)
-                    elif media_path.endswith(".mp4"):
-                        c.send_video(dest, media_path)
-                    elif media_path.endswith((".ogg", ".mp3")):
-                        c.send_audio(dest, media_path)
-            except Exception as err:
-                print(f"[Anti-Delete] Erro ao enviar notificacao: {err}")
-        return
+                dest = owner_jid if owner_jid else chat_clean
+                try:
+                    c.send_message(dest, alerta)
 
-    # Ignora mensagens de protocolo que nao sejam apagamento
-    if protocol_msg:
+                    if media_path and os.path.exists(media_path):
+                        c.send_message(dest, f"Midia apagada de {autor_label}:")
+                        if media_path.endswith((".jpg", ".png")):
+                            c.send_image(dest, media_path)
+                        elif media_path.endswith(".mp4"):
+                            c.send_video(dest, media_path)
+                        elif media_path.endswith((".ogg", ".mp3")):
+                            c.send_audio(dest, media_path)
+                except Exception as err:
+                    print(f"[Anti-Delete] Erro ao enviar notificacao: {err}")
+            else:
+                print(f"[Anti-Delete] Mensagem apagada (ID {revoked_id}), mas nao estava no cache.")
         return
 
     # Extrai o texto da mensagem
     texto_mensagem = (extract_text(raw_msg) or "").strip()
-    chat_label = "Grupo" if is_group else f"Privado (+{sender_number})"
 
-    # Log no terminal de mensagens recebidas
+    # Identifica o nome do local (Grupo ou Privado)
+    chat_label = f"Privado (+{sender_number})"
+    if is_group:
+        chat_label = f"Grupo ({chat.User})"
+        try:
+            g_info = c.get_group_info(chat)
+            if g_info and g_info.GroupName and g_info.GroupName.Name:
+                chat_label = f"Grupo {g_info.GroupName.Name}"
+        except Exception:
+            pass
+
     if texto_mensagem:
-        print(f"[Mensagem salva] De +{sender_number} em {chat_label}: {texto_mensagem[:40]}")
+        print(f"[Mensagem] De +{sender_number} em {chat_label}: {texto_mensagem[:50]}")
 
-    # Salva copia de midia em temp caso seja apagada depois
+    # Salva copia de midia em temp apenas se a mensagem realmente contiver midia
     salved_media = None
     try:
-        if raw_msg.imageMessage or raw_msg.videoMessage or raw_msg.audioMessage:
-            temp_ext = ".jpg" if raw_msg.imageMessage else (".mp4" if raw_msg.videoMessage else ".ogg")
-            salved_media = os.path.join(TEMP_DIR, f"{msg_id}{temp_ext}")
+        if has_field(raw_msg, "imageMessage"):
+            salved_media = os.path.join(TEMP_DIR, f"{msg_id}.jpg")
             c.download_any(raw_msg, salved_media)
-            print(f"[Midia salva] De +{sender_number} em {chat_label}: {temp_ext}")
+            print(f"[Midia salva] Imagem de +{sender_number} em {chat_label}")
+        elif has_field(raw_msg, "videoMessage"):
+            salved_media = os.path.join(TEMP_DIR, f"{msg_id}.mp4")
+            c.download_any(raw_msg, salved_media)
+            print(f"[Midia salva] Video de +{sender_number} em {chat_label}")
+        elif has_field(raw_msg, "audioMessage"):
+            salved_media = os.path.join(TEMP_DIR, f"{msg_id}.ogg")
+            c.download_any(raw_msg, salved_media)
+            print(f"[Midia salva] Audio de +{sender_number} em {chat_label}")
     except Exception:
         salved_media = None
 
-    # Guarda mensagem no cache
-    message_cache[msg_id] = {
-        "sender_number": sender_number,
-        "chat_name": chat_label,
-        "text": texto_mensagem,
-        "media_path": salved_media,
-        "time": datetime.now().strftime("%H:%M:%S")
-    }
+    # Guarda mensagem no cache para o anti-delete
+    if texto_mensagem or salved_media:
+        message_cache[msg_id] = {
+            "sender_number": sender_number,
+            "pushname": msg_info.Pushname or "",
+            "chat_name": chat_label,
+            "text": texto_mensagem,
+            "media_path": salved_media,
+            "time": datetime.now().strftime("%H:%M:%S")
+        }
 
     # Mantem o cache com no maximo 1000 mensagens
     if len(message_cache) > 1000:
@@ -212,9 +260,9 @@ def on_message(c: NewClient, message: MessageEv):
     if is_from_me:
         # Comando para desligar
         if texto_mensagem.lower() in [".encerrar", ".desligar", ".stop"]:
-            print("Comando de encerramento recebido. Desligando...")
+            print("Comando de encerramento recebido pelo WhatsApp. Desligando...")
             try:
-                c.reply_message("Encerrando bot...", message)
+                c.reply_message("Encerrando bot...", message, to=chat_clean)
             except Exception:
                 pass
             time.sleep(1)
@@ -226,63 +274,76 @@ def on_message(c: NewClient, message: MessageEv):
             qtd = 2
             alvo = None
 
-            ctx = getattr(raw_msg.extendedTextMessage, "contextInfo", None)
-            if ctx and ctx.participant:
-                alvo = ctx.participant.split("@")[0]
-                if len(partes) > 1 and partes[1].isdigit():
-                    qtd = int(partes[1])
-            elif len(partes) > 1:
+            if has_field(raw_msg, "extendedTextMessage") and has_field(raw_msg.extendedTextMessage, "contextInfo"):
+                ctx = raw_msg.extendedTextMessage.contextInfo
+                if ctx.participant:
+                    alvo = ctx.participant.split("@")[0]
+                    if len(partes) > 1 and partes[1].isdigit():
+                        qtd = int(partes[1])
+
+            if not alvo and len(partes) > 1:
                 alvo = partes[1].replace("+", "").replace("@", "").strip()
                 if len(partes) > 2 and partes[2].isdigit():
                     qtd = int(partes[2])
 
+            if not alvo and not is_group and chat.User != owner_number:
+                alvo = chat.User
+
             if alvo:
                 db.add_authorization(alvo, qtd)
-                c.reply_message(f"Usuario +{alvo} autorizado com {qtd} creditos.", message)
+                c.reply_message(f"Usuario +{alvo} autorizado com {qtd} creditos.", message, to=chat_clean)
             else:
-                c.reply_message("Uso: responda a mensagem com .authorize ou digite: .authorize <numero>", message)
+                c.reply_message("Uso: responda a mensagem com .authorize ou digite: .authorize <numero>", message, to=chat_clean)
             return
 
         # Comando .remover
         if texto_mensagem.lower().startswith(".remover"):
             partes = texto_mensagem.split()
             alvo = None
-            ctx = getattr(raw_msg.extendedTextMessage, "contextInfo", None)
-            if ctx and ctx.participant:
-                alvo = ctx.participant.split("@")[0]
-            elif len(partes) > 1:
+
+            if has_field(raw_msg, "extendedTextMessage") and has_field(raw_msg.extendedTextMessage, "contextInfo"):
+                ctx = raw_msg.extendedTextMessage.contextInfo
+                if ctx.participant:
+                    alvo = ctx.participant.split("@")[0]
+
+            if not alvo and len(partes) > 1:
                 alvo = partes[1].replace("+", "").replace("@", "").strip()
+
+            if not alvo and not is_group and chat.User != owner_number:
+                alvo = chat.User
 
             if alvo:
                 db.remove_authorization(alvo)
-                c.reply_message(f"Usuario +{alvo} removido.", message)
+                c.reply_message(f"Usuario +{alvo} removido.", message, to=chat_clean)
             else:
-                c.reply_message("Uso: responda a mensagem com .remover ou digite: .remover <numero>", message)
+                c.reply_message("Uso: responda a mensagem com .remover ou digite: .remover <numero>", message, to=chat_clean)
             return
 
     # 3. Comando .audiosticker
     if ".audiosticker" in texto_mensagem.lower():
         # Bloqueio em grupos
         if is_group:
-            c.reply_message("sai dai bixo", message)
+            c.reply_message("sai dai bixo", message, to=chat_clean)
             return
 
         # Bloqueio para nao autorizados no privado
-        if not is_from_me and not db.is_authorized(sender_number):
-            c.reply_message("aguarde o adm", message)
+        if not is_from_me and not (db.is_authorized(sender_number) or db.is_authorized(chat.User)):
+            c.reply_message("aguarde o adm", message, to=chat_clean)
             return
 
-        # Busca o video na mensagem ou na mensagem citada
+        # Busca o video na propria mensagem ou na mensagem respondida
         video_target = None
-        if raw_msg.videoMessage:
+        if has_field(raw_msg, "videoMessage"):
             video_target = raw_msg
-        else:
-            ctx = getattr(raw_msg.extendedTextMessage, "contextInfo", None)
-            if ctx and ctx.quotedMessage and ctx.quotedMessage.videoMessage:
-                video_target = ctx.quotedMessage
+        elif has_field(raw_msg, "extendedTextMessage") and has_field(raw_msg.extendedTextMessage, "contextInfo"):
+            ctx = raw_msg.extendedTextMessage.contextInfo
+            if has_field(ctx, "quotedMessage"):
+                quoted_unwrapped = desempacotar_mensagem(ctx.quotedMessage)
+                if has_field(quoted_unwrapped, "videoMessage"):
+                    video_target = quoted_unwrapped
 
         if not video_target:
-            c.reply_message("Envie um video com .audiosticker na legenda ou responda a um video com o comando.", message)
+            c.reply_message("Envie um video com .audiosticker na legenda ou responda a um video com o comando.", message, to=chat_clean)
             return
 
         input_video = os.path.join(TEMP_DIR, f"input_{msg_id}.mp4")
@@ -295,18 +356,21 @@ def on_message(c: NewClient, message: MessageEv):
             audio_ok = mp.extract_audio(input_video, output_audio, max_duration=5)
 
             if sticker_ok:
-                c.send_sticker(chat, output_webp, name="audiosticker", packname="bot")
+                c.send_sticker(chat_clean, output_webp, name="audiosticker", packname="bot")
                 if audio_ok:
-                    c.send_audio(chat, output_audio, ptt=True)
+                    c.send_audio(chat_clean, output_audio, ptt=True)
 
                 if not is_from_me:
-                    db.consume_credit(sender_number)
+                    if db.is_authorized(sender_number):
+                        db.consume_credit(sender_number)
+                    elif db.is_authorized(chat.User):
+                        db.consume_credit(chat.User)
             else:
-                c.reply_message("Nao foi possivel converter o video.", message)
+                c.reply_message("Nao foi possivel converter o video.", message, to=chat_clean)
 
         except Exception as e:
             print(f"Erro ao processar audiosticker: {e}")
-            c.reply_message("Erro ao processar o video.", message)
+            c.reply_message("Erro ao processar o video.", message, to=chat_clean)
         finally:
             for temp_file in [input_video, output_webp, output_audio]:
                 if os.path.exists(temp_file):
