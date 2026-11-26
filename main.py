@@ -1,12 +1,20 @@
 import os
 import sys
 import time
+import glob
 import shutil
 import threading
 from datetime import datetime
 import imageio_ffmpeg
 
-# Configura logger duplo para terminal e arquivo bot.log
+# Apaga a sessao anterior para sempre exigir um novo QR Code ao abrir
+for f in glob.glob("session.db*"):
+    try:
+        os.remove(f)
+    except Exception:
+        pass
+
+# Configura logger duplo para terminal e bot.log
 class Logger(object):
     def __init__(self):
         self.terminal = sys.stdout
@@ -34,7 +42,7 @@ class Logger(object):
 sys.stdout = Logger()
 sys.stderr = Logger()
 
-# Configura FFmpeg e FFprobe no PATH local
+# Configura FFmpeg e FFprobe locais no PATH
 os.makedirs("bin", exist_ok=True)
 _ffmpeg_exe = imageio_ffmpeg.get_ffmpeg_exe()
 _local_ffmpeg = os.path.join("bin", "ffmpeg.exe")
@@ -58,53 +66,29 @@ from neonize.utils.jid import build_jid, JIDToNonAD
 import database as db
 import media_processor as mp
 
-# Pasta temporaria
 TEMP_DIR = "temp"
 os.makedirs(TEMP_DIR, exist_ok=True)
 
-# Cache de mensagens para o anti-delete
+# Cache de mensagens para anti-delete
 message_cache = {}
 
-# Inicializa o cliente do WhatsApp
+# Inicializa cliente do WhatsApp com sessao nova
 client = NewClient("session.db")
 owner_jid = None
 owner_number = None
 
-# Desempacota mensagens encapsuladas (ex: enviadas pelo celular ou temporarias)
-def desempacotar_mensagem(msg):
-    if not msg:
-        return msg
-    for _ in range(5):
-        if hasattr(msg, "deviceSentMessage") and msg.deviceSentMessage and msg.deviceSentMessage.message:
-            msg = msg.deviceSentMessage.message
-            continue
-        if hasattr(msg, "ephemeralMessage") and msg.ephemeralMessage and msg.ephemeralMessage.message:
-            msg = msg.ephemeralMessage.message
-            continue
-        if hasattr(msg, "viewOnceMessage") and msg.viewOnceMessage and msg.viewOnceMessage.message:
-            msg = msg.viewOnceMessage.message
-            continue
-        if hasattr(msg, "viewOnceMessageV2") and msg.viewOnceMessageV2 and msg.viewOnceMessageV2.message:
-            msg = msg.viewOnceMessageV2.message
-            continue
-        if hasattr(msg, "documentWithCaptionMessage") and msg.documentWithCaptionMessage and msg.documentWithCaptionMessage.message:
-            msg = msg.documentWithCaptionMessage.message
-            continue
-        break
-    return msg
-
-# Thread para comandos no terminal
+# Thread para leitura de comandos no terminal
 def escutar_terminal():
     while True:
         try:
             linha = input().strip().lower()
-            if linha in ["sair", "exit", "stop", "encerrar"]:
+            if linha in ["sair", "exit", "stop", "encerrar", "desligar"]:
                 print("Encerrando bot pelo terminal...")
                 os._exit(0)
         except (EOFError, KeyboardInterrupt):
             break
 
-# Evento de conexao
+# Evento de conexao bem sucedida
 @client.event(ConnectedEv)
 def on_connected(c: NewClient, _: ConnectedEv):
     global owner_jid, owner_number
@@ -112,12 +96,14 @@ def on_connected(c: NewClient, _: ConnectedEv):
         me = c.get_me()
         owner_number = me.JID.User
         owner_jid = build_jid(owner_number, "s.whatsapp.net")
+        print("\n========================================")
         print(f"Conectado como: {me.PushName} ({owner_number})")
-        print("Digite 'sair' no terminal ou envie .encerrar no WhatsApp para desligar.")
+        print("Digite 'sair' no terminal ou .desligar no WhatsApp para fechar.")
+        print("========================================\n")
     except Exception as e:
         print(f"Conectado. Erro ao ler dados: {e}")
 
-# Evento de mensagens recebidas
+# Evento de recebimento de mensagens
 @client.event(MessageEv)
 def on_message(c: NewClient, message: MessageEv):
     global owner_jid, owner_number
@@ -129,18 +115,23 @@ def on_message(c: NewClient, message: MessageEv):
     is_group = msg_info.MessageSource.IsGroup
     sender_number = sender.User
 
-    # Verifica se a mensagem veio do dono (pelo celular ou pelo cliente)
-    is_device_sent = hasattr(message.Message, "deviceSentMessage") and bool(message.Message.deviceSentMessage)
-    is_from_me = msg_info.MessageSource.IsFromMe or is_device_sent or (owner_number and sender_number == owner_number)
+    raw_msg = message.Message
 
-    raw_msg = desempacotar_mensagem(message.Message)
+    # Desempacota se a mensagem veio do proprio celular (deviceSentMessage)
+    if hasattr(raw_msg, "deviceSentMessage") and raw_msg.deviceSentMessage and raw_msg.deviceSentMessage.message:
+        raw_msg = raw_msg.deviceSentMessage.message
 
-    # 1. Anti-delete: detecta aviso de revogacao real
+    # Desempacota se a mensagem veio de grupo com mensagens temporarias
+    if hasattr(raw_msg, "ephemeralMessage") and raw_msg.ephemeralMessage and raw_msg.ephemeralMessage.message:
+        raw_msg = raw_msg.ephemeralMessage.message
+
+    # Verifica se quem enviou foi o dono
+    is_from_me = msg_info.MessageSource.IsFromMe or (owner_number and sender_number == owner_number)
+
+    # 1. Anti-delete: captura evento de mensagem apagada (REVOKE = type 0)
     protocol_msg = getattr(raw_msg, "protocolMessage", None)
     if protocol_msg and protocol_msg.type == 0 and protocol_msg.key and protocol_msg.key.ID:
         revoked_id = protocol_msg.key.ID
-        print(f"[Anti-Delete] Mensagem apagada detectada! ID: {revoked_id}")
-
         if revoked_id in message_cache:
             deleted_info = message_cache[revoked_id]
             author = deleted_info["sender_number"]
@@ -148,7 +139,7 @@ def on_message(c: NewClient, message: MessageEv):
             content = deleted_info["text"]
             media_path = deleted_info.get("media_path")
 
-            print(f"[Anti-Delete] Resgatado do cache (+{author}): {content or '[midia]'}")
+            print(f"[Anti-Delete] Mensagem apagada por +{author} resgatada do cache.")
 
             alerta = (
                 "Mensagem apagada detectada:\n"
@@ -171,35 +162,34 @@ def on_message(c: NewClient, message: MessageEv):
                         c.send_video(dest, media_path)
                     elif media_path.endswith((".ogg", ".mp3")):
                         c.send_audio(dest, media_path)
-                print("[Anti-Delete] Alerta enviado para o seu privado com sucesso.")
             except Exception as err:
-                print(f"[Anti-Delete] Erro ao enviar alerta: {err}")
-        else:
-            print(f"[Anti-Delete] Mensagem {revoked_id} nao estava salva no cache.")
+                print(f"[Anti-Delete] Erro ao enviar notificacao: {err}")
         return
 
-    # Ignora mensagens internas de protocolo
+    # Ignora mensagens de protocolo que nao sejam apagamento
     if protocol_msg:
         return
 
-    # 2. Salva a mensagem recebida no cache
+    # Extrai o texto da mensagem
     texto_mensagem = (extract_text(raw_msg) or "").strip()
     chat_label = "Grupo" if is_group else f"Privado (+{sender_number})"
 
-    # Loga no terminal
-    preview = texto_mensagem[:40] if texto_mensagem else ("[midia]" if (raw_msg.imageMessage or raw_msg.videoMessage or raw_msg.audioMessage) else "")
-    if preview:
-        print(f"[Mensagem] De +{sender_number} em {chat_label}: {preview}")
+    # Log no terminal de mensagens recebidas
+    if texto_mensagem:
+        print(f"[Mensagem salva] De +{sender_number} em {chat_label}: {texto_mensagem[:40]}")
 
+    # Salva copia de midia em temp caso seja apagada depois
     salved_media = None
     try:
         if raw_msg.imageMessage or raw_msg.videoMessage or raw_msg.audioMessage:
             temp_ext = ".jpg" if raw_msg.imageMessage else (".mp4" if raw_msg.videoMessage else ".ogg")
             salved_media = os.path.join(TEMP_DIR, f"{msg_id}{temp_ext}")
             c.download_any(raw_msg, salved_media)
+            print(f"[Midia salva] De +{sender_number} em {chat_label}: {temp_ext}")
     except Exception:
         salved_media = None
 
+    # Guarda mensagem no cache
     message_cache[msg_id] = {
         "sender_number": sender_number,
         "chat_name": chat_label,
@@ -208,7 +198,7 @@ def on_message(c: NewClient, message: MessageEv):
         "time": datetime.now().strftime("%H:%M:%S")
     }
 
-    # Limpeza de cache se ultrapassar 1000 mensagens
+    # Mantem o cache com no maximo 1000 mensagens
     if len(message_cache) > 1000:
         oldest_key = next(iter(message_cache))
         old_data = message_cache.pop(oldest_key)
@@ -218,18 +208,19 @@ def on_message(c: NewClient, message: MessageEv):
             except Exception:
                 pass
 
-    # 3. Comandos do administrador
+    # 2. Comandos de Administrador (Dono)
     if is_from_me:
+        # Comando para desligar
         if texto_mensagem.lower() in [".encerrar", ".desligar", ".stop"]:
-            print("Comando de encerramento recebido pelo WhatsApp. Desligando...")
+            print("Comando de encerramento recebido. Desligando...")
             try:
-                dest = owner_jid if owner_jid else JIDToNonAD(chat)
-                c.send_message(dest, "Encerrando bot...")
+                c.reply_message("Encerrando bot...", message)
             except Exception:
                 pass
             time.sleep(1)
             os._exit(0)
 
+        # Comando .authorize
         if texto_mensagem.lower().startswith(".authorize"):
             partes = texto_mensagem.split()
             qtd = 2
@@ -247,13 +238,12 @@ def on_message(c: NewClient, message: MessageEv):
 
             if alvo:
                 db.add_authorization(alvo, qtd)
-                dest = owner_jid if owner_jid else JIDToNonAD(chat)
-                c.send_message(dest, f"Usuario +{alvo} autorizado com {qtd} creditos.")
+                c.reply_message(f"Usuario +{alvo} autorizado com {qtd} creditos.", message)
             else:
-                dest = owner_jid if owner_jid else JIDToNonAD(chat)
-                c.send_message(dest, "Uso: responda a mensagem com .authorize ou digite: .authorize <numero>")
+                c.reply_message("Uso: responda a mensagem com .authorize ou digite: .authorize <numero>", message)
             return
 
+        # Comando .remover
         if texto_mensagem.lower().startswith(".remover"):
             partes = texto_mensagem.split()
             alvo = None
@@ -265,23 +255,24 @@ def on_message(c: NewClient, message: MessageEv):
 
             if alvo:
                 db.remove_authorization(alvo)
-                dest = owner_jid if owner_jid else JIDToNonAD(chat)
-                c.send_message(dest, f"Usuario +{alvo} removido.")
+                c.reply_message(f"Usuario +{alvo} removido.", message)
             else:
-                dest = owner_jid if owner_jid else JIDToNonAD(chat)
-                c.send_message(dest, "Uso: responda a mensagem com .remover ou digite: .remover <numero>")
+                c.reply_message("Uso: responda a mensagem com .remover ou digite: .remover <numero>", message)
             return
 
-    # 4. Comando .audiosticker
+    # 3. Comando .audiosticker
     if ".audiosticker" in texto_mensagem.lower():
+        # Bloqueio em grupos
         if is_group:
             c.reply_message("sai dai bixo", message)
             return
 
+        # Bloqueio para nao autorizados no privado
         if not is_from_me and not db.is_authorized(sender_number):
             c.reply_message("aguarde o adm", message)
             return
 
+        # Busca o video na mensagem ou na mensagem citada
         video_target = None
         if raw_msg.videoMessage:
             video_target = raw_msg
@@ -325,6 +316,6 @@ def on_message(c: NewClient, message: MessageEv):
                         pass
 
 if __name__ == "__main__":
-    print("Iniciando bot. Escaneie o QR Code se for a primeira vez.")
+    print("Iniciando bot. Escaneie o QR Code que aparecera no terminal.")
     threading.Thread(target=escutar_terminal, daemon=True).start()
     client.connect()
