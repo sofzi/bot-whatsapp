@@ -7,21 +7,42 @@ import yt_dlp
 # Pega o caminho do binario do FFmpeg portatil
 FFMPEG_BIN = imageio_ffmpeg.get_ffmpeg_exe()
 
+# Le a duracao em segundos de um arquivo de midia via ffmpeg
+def get_media_duration(input_path: str, default: float = 5.0) -> float:
+    try:
+        import re
+        probe = subprocess.run([FFMPEG_BIN, "-i", input_path], capture_output=True, text=True, errors="ignore")
+        m = re.search(r"Duration:\s*(\d+):(\d+):(\d+(?:\.\d+)?)", probe.stderr or "")
+        if m:
+            return float(m.group(1)) * 3600 + float(m.group(2)) * 60 + float(m.group(3))
+    except Exception:
+        pass
+    return default
+
 # Converte video para figurinha animada webp respeitando duracao do video (maximo 10s e 500 KB)
 def convert_video_to_sticker(input_path: str, output_webp_path: str, max_duration: int = 10) -> bool:
-    degraus = [
-        (15, 55, 512),
-        (12, 45, 512),
-        (10, 35, 448),
-        (8, 25, 384),
-        (6, 20, 320),
-        (5, 15, 256),
+    dur = min(float(max_duration), get_media_duration(input_path, default=float(max_duration)))
+
+    # Escolhe o degrau inicial pela duracao para acertar na 1a tentativa sem perder tempo
+    todos_degraus = [
+        (15, 50, 512),
+        (12, 40, 448),
+        (10, 30, 384),
+        (8, 22, 320),
+        (6, 15, 256),
     ]
+    if dur <= 4.0:
+        degraus = todos_degraus
+    elif dur <= 7.0:
+        degraus = todos_degraus[1:]
+    else:
+        degraus = todos_degraus[2:]
+
     try:
         for fps, q, detail in degraus:
             vf = (
-                f"fps={fps},scale={detail}:{detail}:force_original_aspect_ratio=increase:flags=lanczos,"
-                f"crop={detail}:{detail},scale=512:512:flags=lanczos,setsar=1"
+                f"fps={fps},scale={detail}:{detail}:force_original_aspect_ratio=increase:flags=bilinear,"
+                f"crop={detail}:{detail},scale=512:512:flags=bilinear,setsar=1"
             )
             cmd = [
                 FFMPEG_BIN,
@@ -33,7 +54,7 @@ def convert_video_to_sticker(input_path: str, output_webp_path: str, max_duratio
                 "-loop", "0",
                 "-preset", "picture",
                 "-q:v", str(q),
-                "-compression_level", "4",
+                "-compression_level", "2",
                 "-an",
                 output_webp_path
             ]
