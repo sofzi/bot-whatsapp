@@ -1,25 +1,32 @@
 # bot-whatsapp
 
-Bot de WhatsApp em Python para criacao de figurinhas, download de videos e monitoramento de mensagens apagadas, editadas e de visualizacao unica.
+Bot de WhatsApp em Python para criacao de figurinhas com som, download de videos e monitoramento de mensagens apagadas e editadas.
 
-## Funcionalidades
+## Comandos
 
-- `.audiosticker`: cria figurinha com som nativa a partir de um video (ou link de video) respeitando a duracao original ate o limite maximo de 10 segundos (funciona no privado e em grupos para usuarios autorizados).
+### Gerais / Midia
+- `.comandos` / `.ajuda` / `.help` / `.commands` / `.menu`: lista todos os comandos disponiveis.
+- `.audiosticker` / `.soundsticker` / `.figsom`: cria figurinha com som nativa a partir de um video ou link (respeita a duracao original ate 10s, preenchida em 512x512 sem bordas).
   - Em grupo (sem permissao): responde "sai dai bixo".
   - No privado (sem permissao): responde "aguarde o adm".
-- `.fig`: cria figurinha normal a partir de foto ou video enviado/respondido.
-- `.toimg`: converte uma figurinha respondida de volta em imagem (PNG) ou video (MP4).
-- `.baixar <link>`: baixa videos curtos do TikTok, Instagram Reels, YouTube Shorts, etc. e envia no chat.
-- `.ver`: quando o dono responde a uma midia de visualizacao unica com `.ver`, o bot baixa e envia a midia aberta no privado do dono (mesmo em grupos onde o monitoramento esteja desligado).
-- `.authorize`: libera o uso para um contato (padrao 2 usos). Apenas o dono pode usar.
-- `.remover`: remove o contato da lista de autorizados.
-- `.lista`: mostra todos os contatos autorizados no momento e seus creditos restantes.
+- `.fig` / `.sticker`: cria figurinha normal de foto ou video enviado/respondido.
+- `.toimg` / `.parafoto`: converte uma figurinha respondida de volta em imagem (PNG) ou video (MP4).
+- `.baixar` / `.download` / `.dl <link>`: baixa videos do TikTok, Instagram Reels, YouTube Shorts, etc. e envia no chat.
 - `.ping`: responde com o tempo de resposta em milissegundos (ms).
-- `.antidelete`: ativa o monitoramento de mensagens apagadas, editadas e visualizacao unica para grupos (se enviado em um grupo, ativa apenas nele; se enviado no privado, ativa em todos os grupos).
+
+### Administrador (exclusivos do dono)
+- `.authorize` / `.autorizar [numero] [qtd]`: libera o uso para um contato (padrao 2 creditos).
+- `.remover` / `.remove` / `.unauthorize [numero]`: remove o contato da lista de autorizados.
+- `.lista` / `.list`: mostra todos os contatos autorizados no momento e seus creditos restantes.
+- `.antidelete`: ativa o monitoramento de mensagens apagadas e editadas para grupos (se enviado em um grupo, ativa apenas nele; se enviado no privado, ativa em todos os grupos).
 - `.stopantidelete`: desativa o monitoramento nos grupos.
-- `.restart` / `.reiniciar`: reinicia o bot recarregando o codigo sem perder a sessao atual (apenas o dono).
-- `.desligar` / `.encerrar`: desconecta a sessao do WhatsApp, apaga os arquivos de login e fecha o bot (apenas o dono).
-- Monitoramento Automatico (Anti-delete, Anti-edit e Visualizacao Unica): ativo por padrao nas conversas privadas (canais e status sao sempre ignorados). Encaminha no privado do dono qualquer mensagem apagada, texto editado (antes/depois) ou midia de visualizacao unica.
+- `.ver` / `.view` / `.save`: resgata uma midia marcada para o privado do dono.
+- `.restart` / `.reiniciar`: reinicia o bot recarregando o codigo sem perder a sessao atual.
+- `.desligar` / `.encerrar` / `.stop` / `.shutdown`: desconecta a sessao do WhatsApp, apaga os arquivos de login e fecha o bot.
+
+## Monitoramento Automatico
+
+- Anti-delete e Anti-edit ativos por padrao nas conversas privadas (canais e status sao sempre ignorados). Encaminha no privado do dono qualquer mensagem apagada ou texto editado (antes/depois).
 
 ## Como rodar
 
@@ -34,5 +41,5 @@ Bot de WhatsApp em Python para criacao de figurinhas, download de videos e monit
 
 ## Como reiniciar ou encerrar
 
-- **Para reiniciar mantendo a sessao:** envie `.restart` no WhatsApp ou digite `restart` no terminal.
-- **Para desligar e apagar a sessao:** envie `.desligar` (ou `.encerrar`) no WhatsApp ou digite `sair` no terminal.
+- Para reiniciar mantendo a sessao: envie `.restart` no WhatsApp ou digite `restart` no terminal.
+- Para desligar e apagar a sessao: envie `.desligar` (ou `.shutdown`) no WhatsApp ou digite `sair` no terminal.

@@ -474,19 +474,26 @@ def on_message(c: NewClient, message: MessageEv):
     texto_mensagem = (extract_text(raw_msg) or "").strip()
     texto_lower = texto_mensagem.lower()
 
-    # Lista de comandos exclusivos do dono
+    # Lista de comandos exclusivos do dono (PT e EN)
     comandos_adm = (
         ".antidelete",
         ".stopantidelete",
         ".ver",
+        ".view",
+        ".save",
         ".lista",
+        ".list",
         ".encerrar",
         ".desligar",
         ".stop",
+        ".shutdown",
         ".restart",
         ".reiniciar",
         ".authorize",
+        ".autorizar",
         ".remover",
+        ".remove",
+        ".unauthorize",
     )
 
     # Se outra pessoa tentar usar qualquer comando de admin, bloqueia e ignora
@@ -521,8 +528,8 @@ def on_message(c: NewClient, message: MessageEv):
                 c.reply_message("Anti-delete desativado em todos os grupos.", message, to=chat_clean)
             return
 
-        # Comando .ver (resgata visualizacao unica ou midia marcada sob demanda para o privado do dono)
-        if texto_lower == ".ver":
+        # Comando .ver / .view / .save (resgata midia marcada para o privado do dono)
+        if texto_lower in [".ver", ".view", ".save"]:
             quoted_msg, ctx = obter_mensagem_citada(raw_msg)
             if not quoted_msg:
                 c.reply_message("Responda a uma foto, video ou audio com .ver", message, to=chat_clean)
@@ -609,8 +616,8 @@ def on_message(c: NewClient, message: MessageEv):
                         pass
             return
 
-        # Comando .lista (lista todos os usuarios autorizados e seus creditos)
-        if texto_lower == ".lista":
+        # Comando .lista / .list (lista todos os usuarios autorizados e seus creditos)
+        if texto_lower in [".lista", ".list"]:
             autorizados = db.list_authorized()
             if not autorizados:
                 c.reply_message("Nenhum usuario autorizado no momento.", message, to=chat_clean)
@@ -621,7 +628,7 @@ def on_message(c: NewClient, message: MessageEv):
                 c.reply_message("\n".join(linhas), message, to=chat_clean)
             return
 
-        # Comando .restart (reinicia o bot mantendo a sessao atual)
+        # Comando .restart / .reiniciar (reinicia o bot mantendo a sessao atual)
         if texto_lower in [".restart", ".reiniciar"]:
             print("Comando .restart recebido pelo WhatsApp. Reiniciando sem perder a sessao...")
             try:
@@ -631,8 +638,8 @@ def on_message(c: NewClient, message: MessageEv):
             time.sleep(1)
             reiniciar_mantendo_sessao()
 
-        # Comando .desligar (encerra o bot e apaga a sessao)
-        if texto_lower in [".encerrar", ".desligar", ".stop"]:
+        # Comando .desligar / .encerrar / .stop / .shutdown (encerra o bot e apaga a sessao)
+        if texto_lower in [".encerrar", ".desligar", ".stop", ".shutdown"]:
             print("Comando .desligar recebido pelo WhatsApp. Apagando sessao e desligando...")
             try:
                 c.reply_message("Desligando bot e encerrando sessao...", message, to=chat_clean)
@@ -641,8 +648,8 @@ def on_message(c: NewClient, message: MessageEv):
             time.sleep(1)
             encerrar_perdendo_sessao()
 
-        # Comando .authorize
-        if texto_lower.startswith(".authorize"):
+        # Comando .authorize / .autorizar
+        if texto_lower.startswith(".authorize") or texto_lower.startswith(".autorizar"):
             partes = texto_mensagem.split()
             qtd = 2
             alvos = set()
@@ -673,8 +680,8 @@ def on_message(c: NewClient, message: MessageEv):
                 c.reply_message("Uso: responda a mensagem com .authorize ou digite: .authorize <numero>", message, to=chat_clean)
             return
 
-        # Comando .remover
-        if texto_lower.startswith(".remover"):
+        # Comando .remover / .remove / .unauthorize
+        if texto_lower.startswith(".remover") or texto_lower.startswith(".remove") or texto_lower.startswith(".unauthorize"):
             partes = texto_mensagem.split()
             alvos = set()
 
@@ -700,7 +707,34 @@ def on_message(c: NewClient, message: MessageEv):
                 c.reply_message("Uso: responda a mensagem com .remover ou digite: .remover <numero>", message, to=chat_clean)
             return
 
-    # 3. Comando .ping
+    # 3. Comando .comandos / .ajuda / .help / .commands
+    if texto_lower in [".comandos", ".ajuda", ".help", ".commands", ".menu"]:
+        linhas = [
+            "Comandos disponiveis:",
+            "- .audiosticker / .soundsticker / .figsom : cria figurinha com som (video ou link, ate 10s)",
+            "- .fig / .sticker : cria figurinha normal de foto ou video",
+            "- .toimg / .parafoto : converte figurinha respondida em foto ou video",
+            "- .baixar / .download / .dl <link> : baixa video de TikTok, Reels, Shorts, etc.",
+            "- .ping : mostra o tempo de resposta em ms",
+            "- .comandos / .help : lista os comandos",
+        ]
+        if is_from_me:
+            linhas.extend([
+                "",
+                "Comandos de Admin:",
+                "- .authorize / .autorizar [numero] [qtd] : autoriza usuario (padrao 2 creditos)",
+                "- .remover / .remove / .unauthorize [numero] : remove autorizacao",
+                "- .lista / .list : lista usuarios autorizados e creditos",
+                "- .antidelete : ativa anti-delete e anti-edit em grupos",
+                "- .stopantidelete : desativa anti-delete e anti-edit em grupos",
+                "- .ver / .view / .save : resgata midia marcada para o seu privado",
+                "- .restart / .reiniciar : reinicia mantendo a sessao",
+                "- .desligar / .encerrar / .stop / .shutdown : desliga e apaga a sessao",
+            ])
+        c.reply_message("\n".join(linhas), message, to=chat_clean)
+        return
+
+    # 4. Comando .ping
     if texto_lower == ".ping":
         agora_ms = int(time.time() * 1000)
         msg_ts = msg_info.Timestamp
@@ -732,8 +766,8 @@ def on_message(c: NewClient, message: MessageEv):
                 if db.is_authorized(k):
                     db.consume_credit(k)
 
-    # 4. Comando .audiosticker (video anexado, video respondido ou link de rede social)
-    if ".audiosticker" in texto_lower:
+    # 5. Comando .audiosticker / .soundsticker / .figsom
+    if any(cmd in texto_lower for cmd in [".audiosticker", ".soundsticker", ".figsom"]):
         if not autorizado:
             bloquear_nao_autorizado()
             return
@@ -791,8 +825,8 @@ def on_message(c: NewClient, message: MessageEv):
                         pass
         return
 
-    # 5. Comando .fig (figurinha estatica ou animada sem audio separado)
-    if texto_lower == ".fig" or texto_lower.startswith(".fig "):
+    # 6. Comando .fig / .sticker (figurinha estatica ou animada sem audio separado)
+    if any(texto_lower == cmd or texto_lower.startswith(cmd + " ") for cmd in [".fig", ".sticker"]):
         if not autorizado:
             bloquear_nao_autorizado()
             return
@@ -845,8 +879,8 @@ def on_message(c: NewClient, message: MessageEv):
                         pass
         return
 
-    # 6. Comando .toimg (converte figurinha respondida em imagem ou video)
-    if texto_lower == ".toimg":
+    # 7. Comando .toimg / .parafoto (converte figurinha respondida em imagem ou video)
+    if texto_lower in [".toimg", ".parafoto"]:
         if not autorizado:
             bloquear_nao_autorizado()
             return
@@ -883,8 +917,8 @@ def on_message(c: NewClient, message: MessageEv):
                         pass
         return
 
-    # 7. Comando .baixar <link> (baixa video de TikTok, Reels, Shorts, etc.)
-    if texto_lower.startswith(".baixar"):
+    # 8. Comando .baixar / .download / .dl <link> (baixa video de TikTok, Reels, Shorts, etc.)
+    if any(texto_lower == cmd or texto_lower.startswith(cmd + " ") for cmd in [".baixar", ".download", ".dl"]):
         if not autorizado:
             bloquear_nao_autorizado()
             return
