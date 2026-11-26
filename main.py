@@ -212,15 +212,6 @@ def desempacotar_mensagem(msg):
         if has_field(msg, "ephemeralMessage") and has_field(msg.ephemeralMessage, "message"):
             msg = msg.ephemeralMessage.message
             continue
-        if has_field(msg, "viewOnceMessage") and has_field(msg.viewOnceMessage, "message"):
-            msg = msg.viewOnceMessage.message
-            continue
-        if has_field(msg, "viewOnceMessageV2") and has_field(msg.viewOnceMessageV2, "message"):
-            msg = msg.viewOnceMessageV2.message
-            continue
-        if has_field(msg, "viewOnceMessageV2Extension") and has_field(msg.viewOnceMessageV2Extension, "message"):
-            msg = msg.viewOnceMessageV2Extension.message
-            continue
         if has_field(msg, "documentWithCaptionMessage") and has_field(msg.documentWithCaptionMessage, "message"):
             msg = msg.documentWithCaptionMessage.message
             continue
@@ -281,34 +272,6 @@ def enviar_figurinha_sonora_nativa(c: NewClient, chat_dest, webp_path: str, audi
 
     c.send_message(chat_dest, native_msg)
 
-# Verifica se a mensagem original e de visualizacao unica
-def is_view_once(orig_msg, unwrapped_msg) -> bool:
-    cur = orig_msg
-    for _ in range(5):
-        if not cur:
-            break
-        if (
-            has_field(cur, "viewOnceMessage")
-            or has_field(cur, "viewOnceMessageV2")
-            or has_field(cur, "viewOnceMessageV2Extension")
-        ):
-            return True
-        if has_field(cur, "deviceSentMessage") and has_field(cur.deviceSentMessage, "message"):
-            cur = cur.deviceSentMessage.message
-            continue
-        if has_field(cur, "ephemeralMessage") and has_field(cur.ephemeralMessage, "message"):
-            cur = cur.ephemeralMessage.message
-            continue
-        break
-
-    if has_field(unwrapped_msg, "imageMessage") and unwrapped_msg.imageMessage.viewOnce:
-        return True
-    if has_field(unwrapped_msg, "videoMessage") and unwrapped_msg.videoMessage.viewOnce:
-        return True
-    if has_field(unwrapped_msg, "audioMessage") and unwrapped_msg.audioMessage.viewOnce:
-        return True
-    return False
-
 # Extrai o primeiro link (http/https) de um texto
 def extrair_url(texto: str) -> str | None:
     match = re.search(r"(https?://[^\s]+)", texto or "")
@@ -346,7 +309,7 @@ def on_connected(c: NewClient, _: ConnectedEv):
         owner_jid = build_jid(owner_number, "s.whatsapp.net")
         print("\n========================================")
         print(f"Conectado como: {me.PushName} ({owner_number})")
-        print("Monitoramento (Anti-delete / Anti-edit / View-once): Ativo no privado | Use .antidelete para grupos")
+        print("Monitoramento (Anti-delete / Anti-edit): Ativo no privado | Use .antidelete para grupos")
         print("Terminal: digite 'restart' para reiniciar ou 'sair' para desligar e apagar sessao.")
         print("WhatsApp: envie .restart para reiniciar ou .desligar para fechar e apagar sessao.")
         print("========================================\n")
@@ -566,32 +529,10 @@ def on_message(c: NewClient, message: MessageEv):
                 c.reply_message("A mensagem respondida nao contem foto, video ou audio.", message, to=chat_clean)
                 return
 
-            # 2. Verifica se o WhatsApp removeu a URL (bloqueio nativo de view_once no WhatsApp Web)
+            # 2. Verifica se a midia possui URL disponivel para download
             has_url = bool(getattr(media_obj, "URL", "") or getattr(media_obj, "directPath", ""))
             if not has_url:
-                thumb = getattr(media_obj, "JPEGThumbnail", b"")
-                if thumb:
-                    temp_thumb = os.path.join(TEMP_DIR, f"ver_thumb_{msg_id}.jpg")
-                    try:
-                        with open(temp_thumb, "wb") as f:
-                            f.write(thumb)
-                        c.send_message(
-                            dest,
-                            "O WhatsApp bloqueou o envio do arquivo original de visualizacao unica para o WhatsApp Web (apenas a miniatura estava disponivel):",
-                        )
-                        c.send_image(dest, temp_thumb)
-                    finally:
-                        if os.path.exists(temp_thumb):
-                            try:
-                                os.remove(temp_thumb)
-                            except Exception:
-                                pass
-                else:
-                    c.reply_message(
-                        "O WhatsApp bloqueou o envio desta midia de visualizacao unica para aparelhos conectados (WhatsApp Web).",
-                        message,
-                        to=chat_clean,
-                    )
+                c.reply_message("Nao ha arquivo disponivel para baixar nesta mensagem.", message, to=chat_clean)
                 return
 
             temp_ver = os.path.join(TEMP_DIR, f"ver_{msg_id}{ext}")
@@ -952,7 +893,7 @@ def on_message(c: NewClient, message: MessageEv):
                     pass
         return
 
-    # 8. Cache do Anti-Delete, Anti-Edit e Visualizacao Unica: ignora grupos se o monitoramento nao estiver ativo
+    # 9. Cache do Anti-Delete e Anti-Edit: ignora grupos se o monitoramento nao estiver ativo
     if not monitorar_conversa:
         return
 
@@ -989,31 +930,6 @@ def on_message(c: NewClient, message: MessageEv):
 
     horario_atual = datetime.now().strftime("%H:%M:%S")
     pushname = msg_info.Pushname or ""
-
-    # Se for midia de visualizacao unica, encaminha imediatamente para o privado do dono
-    if salved_media and os.path.exists(salved_media) and not is_from_me and is_view_once(message.Message, raw_msg):
-        autor_label = f"{pushname} (+{sender_number})" if pushname else f"+{sender_number}"
-        print(f"[Visualizacao Unica] Midia de {autor_label} em {chat_label} capturada!")
-        alerta_vo = (
-            "Midia de visualizacao unica detectada:\n"
-            f"De: {autor_label}\n"
-            f"Local: {chat_label}\n"
-            f"Horario: {horario_atual}\n"
-        )
-        if texto_mensagem:
-            alerta_vo += f"Legenda: {texto_mensagem}"
-
-        dest = owner_jid if owner_jid else chat_clean
-        try:
-            c.send_message(dest, alerta_vo)
-            if salved_media.endswith((".jpg", ".png")):
-                c.send_image(dest, salved_media)
-            elif salved_media.endswith(".mp4"):
-                c.send_video(dest, salved_media)
-            elif salved_media.endswith((".ogg", ".mp3")):
-                c.send_audio(dest, salved_media)
-        except Exception as err:
-            print(f"[Visualizacao Unica] Erro ao encaminhar midia: {err}")
 
     if texto_mensagem or salved_media:
         message_cache[msg_id] = {
