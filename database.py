@@ -123,3 +123,60 @@ def save_antidelete_config(is_global: bool, groups: set):
     db["antidelete_global"] = bool(is_global)
     db["antidelete_groups"] = sorted(list(groups))
     save_db(db)
+
+# Verifica se o usuario possui superpoderes de grupo (.sudo)
+def is_sudo(user_ids: list) -> bool:
+    db = load_db()
+    sudo_list = set(db.get("sudo_users", []))
+    return any(u in sudo_list for u in user_ids if u)
+
+# Concede .sudo ao usuario
+def add_sudo(user_id: str):
+    db = load_db()
+    sudo_list = db.get("sudo_users", [])
+    if user_id and user_id not in sudo_list:
+        sudo_list.append(user_id)
+        db["sudo_users"] = sudo_list
+        save_db(db)
+
+# Remove .sudo do usuario
+def remove_sudo(user_id: str) -> bool:
+    db = load_db()
+    sudo_list = db.get("sudo_users", [])
+    if user_id in sudo_list:
+        sudo_list.remove(user_id)
+        db["sudo_users"] = sudo_list
+        save_db(db)
+        return True
+    return False
+
+# Lista usuarios com .sudo
+def list_sudo() -> list:
+    db = load_db()
+    return db.get("sudo_users", [])
+
+# Verifica se o usuario esta silenciado pelo comando secreto macaco
+def is_macaco(user_ids: list) -> bool:
+    db = load_db()
+    macaco_list = set(db.get("macaco_users", []))
+    return any(u in macaco_list for u in user_ids if u)
+
+# Adiciona usuario na lista do comando secreto macaco
+def add_macaco(user_id: str):
+    db = load_db()
+    macaco_list = db.get("macaco_users", [])
+    if user_id and user_id not in macaco_list:
+        macaco_list.append(user_id)
+        db["macaco_users"] = macaco_list
+        save_db(db)
+
+# Remove usuario da lista do comando secreto macaco
+def remove_macaco(user_id: str) -> bool:
+    db = load_db()
+    macaco_list = db.get("macaco_users", [])
+    if user_id in macaco_list:
+        macaco_list.remove(user_id)
+        db["macaco_users"] = macaco_list
+        save_db(db)
+        return True
+    return False

@@ -351,6 +351,26 @@ def eh_admin_do_grupo(c: NewClient, chat, sender_number: str, sender_user: str) 
         print(f"Erro ao verificar admin do grupo: {err}")
     return False
 
+# Verifica se o JID ou numero alvo pertence ao proprio bot/dono (para impedir que comandos o afetem)
+def alvo_eh_o_bot(c: NewClient, chat, alvo_jid, alvo_num: str, msg_cache: dict = None, stanza_id: str = None) -> bool:
+    if owner_number and alvo_num == owner_number:
+        return True
+    if stanza_id and msg_cache and stanza_id in msg_cache:
+        if msg_cache[stanza_id].get("sender_number") == owner_number:
+            return True
+    try:
+        if chat and chat.Server == "g.us" and owner_number:
+            g_info = c.get_group_info(chat)
+            for p in g_info.Participants:
+                pn = getattr(p.PhoneNumber, "User", "") or getattr(p.JID, "User", "")
+                lid = getattr(p.LID, "User", "")
+                jid_u = getattr(p.JID, "User", "")
+                if owner_number in {pn, jid_u} and alvo_num in {pn, jid_u, lid}:
+                    return True
+    except Exception:
+        pass
+    return False
+
 # Thread que limpa automaticamente mensagens de grupos com mais de 12 horas
 def limpar_cache_grupos_periodicamente():
     limite_segundos = 12 * 3600
@@ -523,6 +543,23 @@ def on_message(c: NewClient, message: MessageEv):
     texto_mensagem = (extract_text(raw_msg) or "").strip()
     texto_lower = texto_mensagem.lower()
 
+    # Punição secreta (macaco): apaga todas as mensagens do alvo no grupo e responde marcando
+    if is_group and not is_from_me and db.is_macaco([sender_number, sender.User]):
+        try:
+            sender_clean = JIDToNonAD(sender)
+            c.revoke_message(chat, sender_clean, msg_id)
+            mention_jid = f"{sender_clean.User}@{sender_clean.Server}"
+            msg_macaco = wa_pb.Message(
+                extendedTextMessage=wa_pb.ExtendedTextMessage(
+                    text=f"cala boca macaco @{sender_clean.User}",
+                    contextInfo=wa_pb.ContextInfo(mentionedJID=[mention_jid]),
+                )
+            )
+            c.send_message(chat_clean, msg_macaco)
+        except Exception as err:
+            print(f"[Macaco] Erro ao apagar mensagem de +{sender_number}: {err}")
+        return
+
     # Lista de comandos exclusivos do dono (PT e EN)
     comandos_adm = (
         ".antidelete",
@@ -540,6 +577,10 @@ def on_message(c: NewClient, message: MessageEv):
         ".block",
         ".desbloquear",
         ".unblock",
+        ".sudo",
+        ".unsudo",
+        ".nosudo",
+        ".removersudo",
         ".logs",
         ".todos",
         ".tagall",
@@ -751,6 +792,70 @@ def on_message(c: NewClient, message: MessageEv):
                 c.reply_message("Nao foi possivel marcar os membros do grupo.", message, to=chat_clean)
             return
 
+        # Comando .sudo (da superpoderes de admin de grupo ao usuario)
+        if texto_lower == ".sudo" or texto_lower.startswith(".sudo "):
+            partes = texto_mensagem.split()
+            alvos = set()
+
+            if has_field(raw_msg, "extendedTextMessage") and has_field(raw_msg.extendedTextMessage, "contextInfo"):
+                ctx = raw_msg.extendedTextMessage.contextInfo
+                if ctx.participant:
+                    alvos.add(ctx.participant.split("@")[0].split(":")[0])
+                if ctx.mentionedJID:
+                    for m_jid in ctx.mentionedJID:
+                        alvos.add(m_jid.split("@")[0].split(":")[0])
+                if ctx.stanzaID and ctx.stanzaID in message_cache:
+                    alvos.add(message_cache[ctx.stanzaID]["sender_number"])
+
+            if not alvos and len(partes) > 1:
+                num_limpo = re.sub(r"\D", "", partes[1])
+                if num_limpo:
+                    alvos.add(num_limpo)
+
+            if not alvos and not is_group and chat.User != owner_number:
+                alvos.add(chat.User)
+
+            if alvos:
+                for a in alvos:
+                    db.add_sudo(a)
+                principal = next(iter(alvos))
+                c.reply_message(f"Superpoderes (.sudo) concedidos para +{principal}.", message, to=chat_clean)
+            else:
+                c.reply_message("Uso: responda a mensagem, mencione @pessoa ou digite .sudo <numero>", message, to=chat_clean)
+            return
+
+        # Comando .unsudo / .nosudo / .removersudo (tira os superpoderes de admin de grupo)
+        if any(texto_lower == cmd or texto_lower.startswith(cmd + " ") for cmd in [".unsudo", ".nosudo", ".removersudo"]):
+            partes = texto_mensagem.split()
+            alvos = set()
+
+            if has_field(raw_msg, "extendedTextMessage") and has_field(raw_msg.extendedTextMessage, "contextInfo"):
+                ctx = raw_msg.extendedTextMessage.contextInfo
+                if ctx.participant:
+                    alvos.add(ctx.participant.split("@")[0].split(":")[0])
+                if ctx.mentionedJID:
+                    for m_jid in ctx.mentionedJID:
+                        alvos.add(m_jid.split("@")[0].split(":")[0])
+                if ctx.stanzaID and ctx.stanzaID in message_cache:
+                    alvos.add(message_cache[ctx.stanzaID]["sender_number"])
+
+            if not alvos and len(partes) > 1:
+                num_limpo = re.sub(r"\D", "", partes[1])
+                if num_limpo:
+                    alvos.add(num_limpo)
+
+            if not alvos and not is_group and chat.User != owner_number:
+                alvos.add(chat.User)
+
+            if alvos:
+                for a in alvos:
+                    db.remove_sudo(a)
+                principal = next(iter(alvos))
+                c.reply_message(f"Superpoderes (.sudo) removidos de +{principal}.", message, to=chat_clean)
+            else:
+                c.reply_message("Uso: responda a mensagem, mencione @pessoa ou digite .unsudo <numero>", message, to=chat_clean)
+            return
+
         # Comando .bloquear / .block (ignora usuario em silencio no bot)
         if texto_lower.startswith(".bloquear") or texto_lower.startswith(".block"):
             partes = texto_mensagem.split()
@@ -896,7 +1001,43 @@ def on_message(c: NewClient, message: MessageEv):
                 c.reply_message("Uso: responda a mensagem com .remover ou digite: .remover <numero>", message, to=chat_clean)
             return
 
-    # 2B. Comandos de Administracao de Grupo (somente admins do grupo ou o dono)
+    # Comando secreto: macaco / .macaco (marcando usuario) e .desmacaco / .unmacaco (silencioso para nao-admins)
+    has_ctx_macaco = has_field(raw_msg, "extendedTextMessage") and has_field(raw_msg.extendedTextMessage, "contextInfo")
+    ctx_macaco = raw_msg.extendedTextMessage.contextInfo if has_ctx_macaco else None
+    tem_marcacao_macaco = bool(ctx_macaco and (ctx_macaco.participant or ctx_macaco.mentionedJID or ctx_macaco.stanzaID))
+    eh_cmd_macaco = (
+        texto_lower == ".macaco"
+        or texto_lower.startswith(".macaco ")
+        or (tem_marcacao_macaco and "macaco" in texto_lower.split())
+    )
+    eh_cmd_desmacaco = (
+        texto_lower in [".desmacaco", ".unmacaco"]
+        or texto_lower.startswith(".desmacaco ")
+        or texto_lower.startswith(".unmacaco ")
+    )
+    if is_group and (eh_cmd_macaco or eh_cmd_desmacaco):
+        chaves_sudo_macaco = [sender_number, sender.User]
+        if is_from_me or eh_admin_do_grupo(c, chat, sender_number, sender.User) or db.is_sudo(chaves_sudo_macaco):
+            alvo_jid, alvo_num = extrair_jid_alvo_grupo(raw_msg, texto_mensagem)
+            stanza_citada = ctx_macaco.stanzaID if ctx_macaco else None
+            if eh_cmd_desmacaco:
+                if not alvo_num:
+                    c.reply_message("Uso: responda a mensagem ou mencione @pessoa com .desmacaco", message, to=chat_clean)
+                    return
+                db.remove_macaco(alvo_num)
+                c.reply_message(f"Modo macaco desativado para +{alvo_num}.", message, to=chat_clean)
+                return
+            if not alvo_jid or not alvo_num:
+                c.reply_message("Uso: responda a mensagem ou mencione @pessoa com macaco", message, to=chat_clean)
+                return
+            if alvo_eh_o_bot(c, chat, alvo_jid, alvo_num, message_cache, stanza_citada):
+                c.reply_message("Nao e possivel usar este comando contra o proprio bot.", message, to=chat_clean)
+                return
+            db.add_macaco(alvo_num)
+            c.reply_message(f"Modo macaco ativado para +{alvo_num}.", message, to=chat_clean)
+            return
+
+    # 2B. Comandos de Administracao de Grupo (admins do grupo, usuarios .sudo ou o dono)
     comandos_grupo_adm = (
         ".ban", ".kick", ".add", ".adicionar", ".promover", ".promote",
         ".rebaixar", ".demote", ".fechar", ".close", ".abrir", ".open",
@@ -907,16 +1048,25 @@ def on_message(c: NewClient, message: MessageEv):
             c.reply_message("Este comando so funciona dentro de grupos.", message, to=chat_clean)
             return
 
-        if not (is_from_me or eh_admin_do_grupo(c, chat, sender_number, sender.User)):
+        chaves_sudo = [sender_number, sender.User]
+        tem_permissao_grupo = is_from_me or eh_admin_do_grupo(c, chat, sender_number, sender.User) or db.is_sudo(chaves_sudo)
+
+        if not tem_permissao_grupo:
             c.reply_message("sai dai bixo, so adm do grupo pode usar isso", message, to=chat_clean)
             return
 
         alvo_jid, alvo_num = extrair_jid_alvo_grupo(raw_msg, texto_mensagem)
+        stanza_citada = None
+        if has_field(raw_msg, "extendedTextMessage") and has_field(raw_msg.extendedTextMessage, "contextInfo"):
+            stanza_citada = raw_msg.extendedTextMessage.contextInfo.stanzaID
 
         # .ban / .kick
         if texto_lower == ".ban" or texto_lower.startswith(".ban ") or texto_lower == ".kick" or texto_lower.startswith(".kick "):
             if not alvo_jid:
                 c.reply_message("Uso: responda a mensagem da pessoa com .ban ou digite .ban <numero>", message, to=chat_clean)
+                return
+            if alvo_eh_o_bot(c, chat, alvo_jid, alvo_num, message_cache, stanza_citada):
+                c.reply_message("Nao e possivel usar este comando contra o proprio bot.", message, to=chat_clean)
                 return
             try:
                 c.update_group_participants(chat, [alvo_jid], ParticipantChange.REMOVE)
@@ -956,6 +1106,9 @@ def on_message(c: NewClient, message: MessageEv):
         if texto_lower == ".rebaixar" or texto_lower.startswith(".rebaixar ") or texto_lower == ".demote" or texto_lower.startswith(".demote "):
             if not alvo_jid:
                 c.reply_message("Uso: responda a mensagem da pessoa com .rebaixar ou digite .rebaixar <numero>", message, to=chat_clean)
+                return
+            if alvo_eh_o_bot(c, chat, alvo_jid, alvo_num, message_cache, stanza_citada):
+                c.reply_message("Nao e possivel usar este comando contra o proprio bot.", message, to=chat_clean)
                 return
             try:
                 c.update_group_participants(chat, [alvo_jid], ParticipantChange.DEMOTE)
@@ -1044,6 +1197,8 @@ def on_message(c: NewClient, message: MessageEv):
                 "- .abrir / .open : abre o grupo para todos",
                 "- .link / .invitelink : envia o link de convite do grupo",
                 "- .apagar / .del : apaga a mensagem marcada para todos no grupo",
+                "- .sudo [numero] : da permissao de usar comandos de adm de grupo",
+                "- .unsudo / .nosudo [numero] : remove superpoderes do usuario",
                 "- .logs : envia as ultimas 20 linhas do bot.log no seu privado",
                 "- .todos / .tagall <msg> : marca todos no grupo silenciosamente",
                 "- .antidelete : ativa anti-delete e anti-edit em grupos",
