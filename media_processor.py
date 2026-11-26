@@ -20,9 +20,8 @@ def convert_video_to_sticker(input_path: str, output_webp_path: str, max_duratio
     try:
         for fps, q, detail in degraus:
             vf = (
-                f"fps={fps},scale={detail}:{detail}:force_original_aspect_ratio=decrease,"
-                f"scale=512:512:force_original_aspect_ratio=decrease,"
-                f"pad=512:512:(ow-iw)/2:(oh-ih)/2:color=0x00000000"
+                f"fps={fps},scale={detail}:{detail}:force_original_aspect_ratio=increase:flags=lanczos,"
+                f"crop={detail}:{detail},scale=512:512:flags=lanczos,setsar=1"
             )
             cmd = [
                 FFMPEG_BIN,
@@ -47,14 +46,14 @@ def convert_video_to_sticker(input_path: str, output_webp_path: str, max_duratio
         print(f"Erro ao converter video em sticker: {e}")
         return False
 
-# Converte imagem estatica para figurinha webp 512x512
+# Converte imagem estatica para figurinha webp 512x512 preenchida sem bordas
 def convert_image_to_sticker(input_path: str, output_webp_path: str) -> bool:
     try:
         cmd = [
             FFMPEG_BIN,
             "-y",
             "-i", input_path,
-            "-vf", "scale=512:512:force_original_aspect_ratio=decrease,pad=512:512:(ow-iw)/2:(oh-ih)/2:color=0x00000000",
+            "-vf", "scale=512:512:force_original_aspect_ratio=increase:flags=lanczos,crop=512:512,setsar=1",
             "-vframes", "1",
             output_webp_path
         ]
