@@ -1162,7 +1162,7 @@ def on_message(c: NewClient, message: MessageEv):
             print(f"Erro ao processar audiosticker: {e}")
             c.reply_message("Erro ao processar o video.", message, to=chat_clean)
         finally:
-            for temp_file in [input_video, output_webp, output_audio]:
+            for temp_file in glob.glob(os.path.join(TEMP_DIR, f"*_{msg_id}*")):
                 if os.path.exists(temp_file):
                     try:
                         os.remove(temp_file)
@@ -1291,11 +1291,12 @@ def on_message(c: NewClient, message: MessageEv):
             print(f"Erro no comando .baixar: {e}")
             c.reply_message("Erro ao baixar o video.", message, to=chat_clean)
         finally:
-            if os.path.exists(out_video):
-                try:
-                    os.remove(out_video)
-                except Exception:
-                    pass
+            for temp_file in glob.glob(os.path.join(TEMP_DIR, f"dl_{msg_id}*")):
+                if os.path.exists(temp_file):
+                    try:
+                        os.remove(temp_file)
+                    except Exception:
+                        pass
         return
 
     # 9. Cache do Anti-Delete e Anti-Edit: ignora grupos se o monitoramento nao estiver ativo
