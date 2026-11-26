@@ -470,25 +470,71 @@ def on_message(c: NewClient, message: MessageEv):
 
         # Comando .ver (resgata visualizacao unica ou midia marcada sob demanda para o privado do dono)
         if texto_lower == ".ver":
-            quoted_msg, _ = obter_mensagem_citada(raw_msg)
+            quoted_msg, ctx = obter_mensagem_citada(raw_msg)
             if not quoted_msg:
-                c.reply_message("Responda a uma foto, video ou audio de visualizacao unica com .ver", message, to=chat_clean)
+                c.reply_message("Responda a uma foto, video ou audio com .ver", message, to=chat_clean)
                 return
 
+            dest = owner_jid if owner_jid else chat_clean
+
+            # 1. Tenta buscar do cache caso o bot tenha recebido o arquivo completo
+            if ctx and ctx.stanzaID and ctx.stanzaID in message_cache:
+                cached_media = message_cache[ctx.stanzaID].get("media_path")
+                if cached_media and os.path.exists(cached_media):
+                    c.send_message(dest, "Midia resgatada do cache com .ver:")
+                    if cached_media.endswith((".jpg", ".png")):
+                        c.send_image(dest, cached_media)
+                    elif cached_media.endswith(".mp4"):
+                        c.send_video(dest, cached_media)
+                    elif cached_media.endswith((".ogg", ".mp3")):
+                        c.send_audio(dest, cached_media)
+                    return
+
             ext = None
+            media_obj = None
             if has_field(quoted_msg, "imageMessage"):
                 ext = ".jpg"
+                media_obj = quoted_msg.imageMessage
             elif has_field(quoted_msg, "videoMessage"):
                 ext = ".mp4"
+                media_obj = quoted_msg.videoMessage
             elif has_field(quoted_msg, "audioMessage"):
                 ext = ".ogg"
+                media_obj = quoted_msg.audioMessage
 
-            if not ext:
+            if not ext or not media_obj:
                 c.reply_message("A mensagem respondida nao contem foto, video ou audio.", message, to=chat_clean)
                 return
 
+            # 2. Verifica se o WhatsApp removeu a URL (bloqueio nativo de view_once no WhatsApp Web)
+            has_url = bool(getattr(media_obj, "URL", "") or getattr(media_obj, "directPath", ""))
+            if not has_url:
+                thumb = getattr(media_obj, "JPEGThumbnail", b"")
+                if thumb:
+                    temp_thumb = os.path.join(TEMP_DIR, f"ver_thumb_{msg_id}.jpg")
+                    try:
+                        with open(temp_thumb, "wb") as f:
+                            f.write(thumb)
+                        c.send_message(
+                            dest,
+                            "O WhatsApp bloqueou o envio do arquivo original de visualizacao unica para o WhatsApp Web (apenas a miniatura estava disponivel):",
+                        )
+                        c.send_image(dest, temp_thumb)
+                    finally:
+                        if os.path.exists(temp_thumb):
+                            try:
+                                os.remove(temp_thumb)
+                            except Exception:
+                                pass
+                else:
+                    c.reply_message(
+                        "O WhatsApp bloqueou o envio desta midia de visualizacao unica para aparelhos conectados (WhatsApp Web).",
+                        message,
+                        to=chat_clean,
+                    )
+                return
+
             temp_ver = os.path.join(TEMP_DIR, f"ver_{msg_id}{ext}")
-            dest = owner_jid if owner_jid else chat_clean
             try:
                 c.download_any(quoted_msg, temp_ver)
                 if os.path.exists(temp_ver):

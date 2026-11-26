@@ -123,7 +123,7 @@ def download_social_video(url: str, output_mp4_path: str) -> bool:
             os.remove(output_mp4_path)
 
         ydl_opts = {
-            "format": "best[ext=mp4][filesize<50M]/best[ext=mp4]/best",
+            "format": "bestvideo[height<=720][ext=mp4]+bestaudio[ext=m4a]/bestvideo[height<=720]+bestaudio/bestvideo*+bestaudio/best",
             "outtmpl": output_mp4_path,
             "noplaylist": True,
             "quiet": True,
