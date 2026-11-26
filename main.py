@@ -291,6 +291,17 @@ def extrair_url(texto: str) -> str | None:
     match = re.search(r"(https?://[^\s]+)", texto or "")
     return match.group(1) if match else None
 
+# Converte texto de tempo (ex: 30s, 15m, 2h, 1d) em segundos
+def parse_tempo_segundos(tempo_str: str) -> int | None:
+    m = re.fullmatch(r"(\d+)\s*(s|seg|m|min|h|hr|d)?", tempo_str.strip().lower())
+    if not m:
+        return None
+    valor = int(m.group(1))
+    unidade = m.group(2) or "m"
+    multiplicadores = {"s": 1, "seg": 1, "m": 60, "min": 60, "h": 3600, "hr": 3600, "d": 86400}
+    total = valor * multiplicadores.get(unidade, 60)
+    return total if total > 0 else None
+
 # Retorna a mensagem citada (quotedMessage) desempacotada, se houver
 def obter_mensagem_citada(raw_msg):
     if has_field(raw_msg, "extendedTextMessage") and has_field(raw_msg.extendedTextMessage, "contextInfo"):
@@ -886,7 +897,10 @@ def on_message(c: NewClient, message: MessageEv):
             return
 
     # 2B. Comandos de Administracao de Grupo (somente admins do grupo ou o dono)
-    comandos_grupo_adm = (".ban", ".kick", ".add", ".adicionar", ".promover", ".promote", ".rebaixar", ".demote")
+    comandos_grupo_adm = (
+        ".ban", ".kick", ".add", ".adicionar", ".promover", ".promote",
+        ".rebaixar", ".demote", ".fechar", ".close", ".abrir", ".open", ".link", ".invitelink",
+    )
     if any(texto_lower == cmd or texto_lower.startswith(cmd + " ") for cmd in comandos_grupo_adm):
         if not is_group:
             c.reply_message("Este comando so funciona dentro de grupos.", message, to=chat_clean)
@@ -950,6 +964,36 @@ def on_message(c: NewClient, message: MessageEv):
                 c.reply_message("Nao foi possivel rebaixar. Verifique se o numero do bot e admin do grupo.", message, to=chat_clean)
             return
 
+        # .fechar / .close (somente admins enviam mensagens no grupo)
+        if texto_lower in [".fechar", ".close"]:
+            try:
+                c.set_group_announce(chat, True)
+                c.reply_message("Grupo fechado: apenas admins podem enviar mensagens.", message, to=chat_clean)
+            except Exception as err:
+                print(f"Erro no comando .fechar: {err}")
+                c.reply_message("Nao foi possivel fechar o grupo. Verifique se o numero do bot e admin.", message, to=chat_clean)
+            return
+
+        # .abrir / .open (todos os membros podem enviar mensagens)
+        if texto_lower in [".abrir", ".open"]:
+            try:
+                c.set_group_announce(chat, False)
+                c.reply_message("Grupo aberto: todos os participantes podem enviar mensagens.", message, to=chat_clean)
+            except Exception as err:
+                print(f"Erro no comando .abrir: {err}")
+                c.reply_message("Nao foi possivel abrir o grupo. Verifique se o numero do bot e admin.", message, to=chat_clean)
+            return
+
+        # .link / .invitelink (gera e envia o link de convite do grupo)
+        if texto_lower in [".link", ".invitelink"]:
+            try:
+                convite = c.get_group_invite_link(chat)
+                c.reply_message(f"Link do grupo:\n{convite}", message, to=chat_clean)
+            except Exception as err:
+                print(f"Erro no comando .link: {err}")
+                c.reply_message("Nao foi possivel obter o link. Verifique se o numero do bot e admin.", message, to=chat_clean)
+            return
+
     # 3. Comando .comandos / .ajuda / .help / .commands
     if texto_lower in [".comandos", ".ajuda", ".help", ".commands", ".menu"]:
         linhas = [
@@ -958,6 +1002,7 @@ def on_message(c: NewClient, message: MessageEv):
             "- .fig / .sticker : cria figurinha normal de foto ou video",
             "- .toimg / .parafoto : converte figurinha respondida em foto ou video",
             "- .baixar / .download / .dl <link> : baixa video de TikTok, Reels, Shorts, etc.",
+            "- .lembrete / .remind <tempo> <msg> : agenda um lembrete (ex: 30m, 2h, 10s)",
             "- .ping : mostra o tempo de resposta em ms",
             "- .comandos / .help : lista os comandos",
         ]
@@ -976,6 +1021,9 @@ def on_message(c: NewClient, message: MessageEv):
                 "- .add / .adicionar <numero> : adiciona numero ao grupo",
                 "- .promover / .promote [numero] : torna participante admin do grupo",
                 "- .rebaixar / .demote [numero] : remove admin do participante no grupo",
+                "- .fechar / .close : fecha o grupo (so admins falam)",
+                "- .abrir / .open : abre o grupo para todos",
+                "- .link / .invitelink : envia o link de convite do grupo",
                 "- .logs : envia as ultimas 20 linhas do bot.log no seu privado",
                 "- .todos / .tagall <msg> : marca todos no grupo silenciosamente",
                 "- .antidelete : ativa anti-delete e anti-edit em grupos",
@@ -999,6 +1047,37 @@ def on_message(c: NewClient, message: MessageEv):
             c.get_me()
             ping_ms = max(1, int((time.perf_counter() - t0) * 1000))
         c.reply_message(f"Pong! {ping_ms}ms", message, to=chat_clean)
+        return
+
+    # 4B. Comando .lembrete / .remind <tempo> <texto>
+    if any(texto_lower == cmd or texto_lower.startswith(cmd + " ") for cmd in [".lembrete", ".remind"]):
+        if not (is_from_me or any(db.is_authorized(k) for k in [sender_number, sender.User] + ([] if is_group else [chat.User]))):
+            c.reply_message("aguarde o adm", message, to=chat_clean)
+            return
+
+        partes = texto_mensagem.split(None, 2)
+        if len(partes) < 3:
+            c.reply_message("Uso: .lembrete <tempo> <mensagem> (ex: .lembrete 30m desligar o forno)", message, to=chat_clean)
+            return
+
+        segundos = parse_tempo_segundos(partes[1])
+        texto_lembrete = partes[2].strip()
+        if not segundos or not texto_lembrete:
+            c.reply_message("Tempo invalido. Use algo como: 10s, 30m, 2h ou 1d.", message, to=chat_clean)
+            return
+
+        destino_lembrete = (owner_jid if (is_from_me and owner_jid) else chat_clean)
+
+        def disparar_lembrete():
+            try:
+                c.send_message(destino_lembrete, f"Lembrete:\n{texto_lembrete}")
+            except Exception as err:
+                print(f"Erro ao enviar lembrete: {err}")
+
+        t = threading.Timer(segundos, disparar_lembrete)
+        t.daemon = True
+        t.start()
+        c.reply_message(f"Lembrete agendado para daqui a {partes[1]}.", message, to=chat_clean)
         return
 
     # Verifica chaves de autorizacao do usuario para os comandos de midia

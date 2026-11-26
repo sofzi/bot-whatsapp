@@ -11,6 +11,7 @@ Bot de WhatsApp em Python para criacao de figurinhas com som, download de videos
 - `.fig` / `.sticker`: cria figurinha normal de foto ou video enviado/respondido.
 - `.toimg` / `.parafoto`: converte uma figurinha respondida de volta em imagem (PNG) ou video (MP4).
 - `.baixar` / `.download` / `.dl <link>`: baixa videos do TikTok, Instagram Reels, YouTube Shorts, etc. e envia no chat.
+- `.lembrete` / `.remind <tempo> <mensagem>`: agenda um lembrete (ex: `10s`, `30m`, `2h`, `1d`) e envia quando vencer.
 - `.ping`: responde com o tempo de resposta em milissegundos (ms).
 
 ### Administrador (exclusivos do dono)
@@ -25,6 +26,9 @@ Bot de WhatsApp em Python para criacao de figurinhas com som, download de videos
 - `.add` / `.adicionar <numero>`: adiciona um numero ao grupo (somente admins do grupo ou o dono).
 - `.promover` / `.promote [numero]`: promove o participante a admin do grupo (somente admins do grupo ou o dono).
 - `.rebaixar` / `.demote [numero]`: remove o cargo de admin do participante no grupo (somente admins do grupo ou o dono).
+- `.fechar` / `.close`: fecha o grupo para que apenas admins enviem mensagens (somente admins do grupo ou o dono).
+- `.abrir` / `.open`: abre o grupo para todos os participantes enviarem mensagens (somente admins do grupo ou o dono).
+- `.link` / `.invitelink`: gera e envia o link de convite do grupo (somente admins do grupo ou o dono).
 - `.logs`: envia as ultimas 20 linhas do `bot.log` no privado do dono.
 - `.todos` / `.tagall <mensagem>`: envia uma mensagem em grupo marcando todos os participantes silenciosamente.
 - `.antidelete`: ativa o monitoramento de mensagens apagadas e editadas para grupos (mensagens de grupos sao limpas automaticamente do cache apos 12 horas).
