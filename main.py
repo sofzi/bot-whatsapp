@@ -297,6 +297,26 @@ def obter_mensagem_citada(raw_msg):
             return desempacotar_mensagem(ctx.quotedMessage), ctx
     return None, None
 
+# Thread que limpa automaticamente mensagens de grupos com mais de 12 horas
+def limpar_cache_grupos_periodicamente():
+    limite_segundos = 12 * 3600
+    while True:
+        time.sleep(600)
+        agora = time.time()
+        chaves_expiradas = [
+            k for k, v in list(message_cache.items())
+            if v.get("is_group") and (agora - v.get("created_at", agora)) >= limite_segundos
+        ]
+        for k in chaves_expiradas:
+            item = message_cache.pop(k, None)
+            if item and item.get("media_path") and os.path.exists(item["media_path"]):
+                try:
+                    os.remove(item["media_path"])
+                except Exception:
+                    pass
+        if chaves_expiradas:
+            print(f"[Limpeza automatica] {len(chaves_expiradas)} mensagem(ns) de grupo com mais de 12h removida(s) do cache.")
+
 # Thread para leitura de comandos no terminal
 def escutar_terminal():
     while True:
@@ -460,6 +480,15 @@ def on_message(c: NewClient, message: MessageEv):
         ".list",
         ".status",
         ".info",
+        ".limpar",
+        ".clearcache",
+        ".bloquear",
+        ".ban",
+        ".desbloquear",
+        ".unban",
+        ".logs",
+        ".todos",
+        ".tagall",
         ".encerrar",
         ".desligar",
         ".stop",
@@ -476,6 +505,13 @@ def on_message(c: NewClient, message: MessageEv):
     # Se outra pessoa tentar usar qualquer comando de admin, bloqueia e ignora
     if not is_from_me and any(texto_lower == cmd or texto_lower.startswith(cmd + " ") for cmd in comandos_adm):
         print(f"[Seguranca] Tentativa bloqueada de comando admin por +{sender_number}: {texto_mensagem}")
+        return
+
+    # Se o usuario estiver bloqueado (.bloquear / .ban), ignora qualquer comando em silencio
+    chaves_remetente = [sender_number, sender.User]
+    if not is_group:
+        chaves_remetente.append(chat.User)
+    if not is_from_me and texto_lower.startswith(".") and any(db.is_blocked(k) for k in chaves_remetente):
         return
 
     # 2. Comandos de Administrador (Exclusivos do Dono)
@@ -588,9 +624,127 @@ def on_message(c: NewClient, message: MessageEv):
                 f"- Tempo ligado: {uptime}\n"
                 f"- Mensagens no cache: {qtd_cache}/1000\n"
                 f"- Anti-delete em grupos: {status_grupos}\n"
-                f"- Usuarios autorizados: {qtd_autorizados}"
+                f"- Usuarios autorizados: {qtd_autorizados}\n"
+                f"- Usuarios bloqueados: {len(db.list_blocked())}"
             )
             c.reply_message(resumo, message, to=chat_clean)
+            return
+
+        # Comando .limpar / .clearcache (limpa todo o cache e arquivos temporarios de uma vez)
+        if texto_lower in [".limpar", ".clearcache"]:
+            qtd_msgs = len(message_cache)
+            message_cache.clear()
+            bytes_removidos = 0
+            arqs_removidos = 0
+            if os.path.exists(TEMP_DIR):
+                for nome in os.listdir(TEMP_DIR):
+                    caminho = os.path.join(TEMP_DIR, nome)
+                    if os.path.isfile(caminho):
+                        try:
+                            bytes_removidos += os.path.getsize(caminho)
+                            os.remove(caminho)
+                            arqs_removidos += 1
+                        except Exception:
+                            pass
+            mb = bytes_removidos / (1024 * 1024)
+            c.reply_message(
+                f"Cache limpo: {qtd_msgs} mensagem(ns) e {arqs_removidos} arquivo(s) temporario(s) ({mb:.2f} MB) removidos.",
+                message,
+                to=chat_clean,
+            )
+            return
+
+        # Comando .logs (envia as ultimas 20 linhas do bot.log no privado do dono)
+        if texto_lower == ".logs":
+            dest = owner_jid if owner_jid else chat_clean
+            if not os.path.exists("bot.log"):
+                c.send_message(dest, "Arquivo bot.log ainda nao existe.")
+                return
+            try:
+                with open("bot.log", "r", encoding="utf-8", errors="ignore") as f:
+                    ultimas = f.readlines()[-20:]
+                conteudo_log = "".join(ultimas).strip() or "(log vazio)"
+                if len(conteudo_log) > 3500:
+                    conteudo_log = conteudo_log[-3500:]
+                c.send_message(dest, f"Ultimas linhas do bot.log:\n\n{conteudo_log}")
+            except Exception as err:
+                c.send_message(dest, f"Erro ao ler bot.log: {err}")
+            return
+
+        # Comando .todos / .tagall <mensagem> (mencao silenciosa de todos os membros do grupo)
+        if texto_lower == ".todos" or texto_lower.startswith(".todos ") or texto_lower == ".tagall" or texto_lower.startswith(".tagall "):
+            if not is_group:
+                c.reply_message("Este comando so funciona dentro de grupos.", message, to=chat_clean)
+                return
+            partes = texto_mensagem.split(" ", 1)
+            aviso = partes[1].strip() if len(partes) > 1 and partes[1].strip() else "Atencao!"
+            try:
+                g_info = c.get_group_info(chat)
+                mencoes = [f"{p.JID.User}@{p.JID.Server}" for p in g_info.Participants if p.JID.User]
+                msg_mencao = wa_pb.Message(
+                    extendedTextMessage=wa_pb.ExtendedTextMessage(
+                        text=aviso,
+                        contextInfo=wa_pb.ContextInfo(mentionedJID=mencoes),
+                    )
+                )
+                c.send_message(chat_clean, msg_mencao)
+            except Exception as err:
+                print(f"Erro no comando .todos: {err}")
+                c.reply_message("Nao foi possivel marcar os membros do grupo.", message, to=chat_clean)
+            return
+
+        # Comando .bloquear / .ban (ignora usuario em silencio)
+        if texto_lower.startswith(".bloquear") or texto_lower.startswith(".ban"):
+            partes = texto_mensagem.split()
+            alvos = set()
+
+            if has_field(raw_msg, "extendedTextMessage") and has_field(raw_msg.extendedTextMessage, "contextInfo"):
+                ctx = raw_msg.extendedTextMessage.contextInfo
+                if ctx.participant:
+                    alvos.add(ctx.participant.split("@")[0].split(":")[0])
+                if ctx.stanzaID and ctx.stanzaID in message_cache:
+                    alvos.add(message_cache[ctx.stanzaID]["sender_number"])
+
+            if not alvos and len(partes) > 1:
+                alvos.add(partes[1].replace("+", "").replace("@", "").strip())
+
+            if not alvos and not is_group and chat.User != owner_number:
+                alvos.add(chat.User)
+
+            if alvos:
+                for a in alvos:
+                    db.block_user(a)
+                principal = next(iter(alvos))
+                c.reply_message(f"Usuario +{principal} bloqueado (sera ignorado em silencio).", message, to=chat_clean)
+            else:
+                c.reply_message("Uso: responda a mensagem com .bloquear ou digite: .bloquear <numero>", message, to=chat_clean)
+            return
+
+        # Comando .desbloquear / .unban
+        if texto_lower.startswith(".desbloquear") or texto_lower.startswith(".unban"):
+            partes = texto_mensagem.split()
+            alvos = set()
+
+            if has_field(raw_msg, "extendedTextMessage") and has_field(raw_msg.extendedTextMessage, "contextInfo"):
+                ctx = raw_msg.extendedTextMessage.contextInfo
+                if ctx.participant:
+                    alvos.add(ctx.participant.split("@")[0].split(":")[0])
+                if ctx.stanzaID and ctx.stanzaID in message_cache:
+                    alvos.add(message_cache[ctx.stanzaID]["sender_number"])
+
+            if not alvos and len(partes) > 1:
+                alvos.add(partes[1].replace("+", "").replace("@", "").strip())
+
+            if not alvos and not is_group and chat.User != owner_number:
+                alvos.add(chat.User)
+
+            if alvos:
+                for a in alvos:
+                    db.unblock_user(a)
+                principal = next(iter(alvos))
+                c.reply_message(f"Usuario +{principal} desbloqueado.", message, to=chat_clean)
+            else:
+                c.reply_message("Uso: responda a mensagem com .desbloquear ou digite: .desbloquear <numero>", message, to=chat_clean)
             return
 
         # Comando .lista / .list (lista todos os usuarios autorizados e seus creditos)
@@ -703,6 +857,11 @@ def on_message(c: NewClient, message: MessageEv):
                 "- .remover / .remove / .unauthorize [numero] : remove autorizacao",
                 "- .lista / .list : lista usuarios autorizados e creditos",
                 "- .status / .info : mostra tempo ligado, cache e monitoramento",
+                "- .limpar / .clearcache : limpa todo o cache e arquivos temporarios",
+                "- .bloquear / .ban [numero] : ignora usuario em silencio",
+                "- .desbloquear / .unban [numero] : remove usuario do bloqueio",
+                "- .logs : envia as ultimas 20 linhas do bot.log no seu privado",
+                "- .todos / .tagall <msg> : marca todos no grupo silenciosamente",
                 "- .antidelete : ativa anti-delete e anti-edit em grupos",
                 "- .stopantidelete : desativa anti-delete e anti-edit em grupos",
                 "- .ver / .view / .save : resgata midia marcada para o seu privado",
@@ -973,6 +1132,8 @@ def on_message(c: NewClient, message: MessageEv):
             "sender_number": sender_number,
             "pushname": pushname,
             "chat_name": chat_label,
+            "is_group": is_group,
+            "created_at": time.time(),
             "text": texto_mensagem,
             "media_path": salved_media,
             "time": horario_atual
@@ -991,4 +1152,5 @@ def on_message(c: NewClient, message: MessageEv):
 if __name__ == "__main__":
     print("Iniciando bot. Escaneie o QR Code caso solicitado.")
     threading.Thread(target=escutar_terminal, daemon=True).start()
+    threading.Thread(target=limpar_cache_grupos_periodicamente, daemon=True).start()
     client.connect()

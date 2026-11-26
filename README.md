@@ -18,8 +18,13 @@ Bot de WhatsApp em Python para criacao de figurinhas com som, download de videos
 - `.authorize` / `.autorizar [numero] [qtd]`: libera o uso para um contato (padrao 2 creditos).
 - `.remover` / `.remove` / `.unauthorize [numero]`: remove o contato da lista de autorizados.
 - `.lista` / `.list`: mostra todos os contatos autorizados no momento e seus creditos restantes.
-- `.status` / `.info`: mostra o tempo ligado, mensagens no cache, status do anti-delete em grupos e total de usuarios autorizados.
-- `.antidelete`: ativa o monitoramento de mensagens apagadas e editadas para grupos (se enviado em um grupo, ativa apenas nele; se enviado no privado, ativa em todos os grupos).
+- `.status` / `.info`: mostra o tempo ligado, mensagens no cache, status do anti-delete em grupos e total de usuarios autorizados/bloqueados.
+- `.limpar` / `.clearcache`: limpa imediatamente todo o cache de mensagens (privado e grupos) e apaga arquivos temporarios da pasta `temp/`.
+- `.bloquear` / `.ban [numero]`: bloqueia um usuario para que o bot o ignore em silencio total.
+- `.desbloquear` / `.unban [numero]`: remove o usuario da lista de bloqueados.
+- `.logs`: envia as ultimas 20 linhas do `bot.log` no privado do dono.
+- `.todos` / `.tagall <mensagem>`: envia uma mensagem em grupo marcando todos os participantes silenciosamente.
+- `.antidelete`: ativa o monitoramento de mensagens apagadas e editadas para grupos (mensagens de grupos sao limpas automaticamente do cache apos 12 horas).
 - `.stopantidelete`: desativa o monitoramento nos grupos.
 - `.ver` / `.view` / `.save`: resgata uma midia marcada para o privado do dono.
 - `.restart` / `.reiniciar`: reinicia o bot recarregando o codigo sem perder a sessao atual.

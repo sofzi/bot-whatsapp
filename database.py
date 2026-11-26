@@ -60,3 +60,33 @@ def list_authorized() -> dict:
     db = load_db()
     users = db.get("authorized_users", {})
     return {u: c for u, c in users.items() if c > 0}
+
+# Verifica se um usuario esta bloqueado (ignorado em silencio)
+def is_blocked(user_id: str) -> bool:
+    db = load_db()
+    return user_id in db.get("blocked_users", [])
+
+# Adiciona usuario na lista de bloqueados
+def block_user(user_id: str):
+    db = load_db()
+    blocked = db.get("blocked_users", [])
+    if user_id not in blocked:
+        blocked.append(user_id)
+        db["blocked_users"] = blocked
+        save_db(db)
+
+# Remove usuario da lista de bloqueados
+def unblock_user(user_id: str) -> bool:
+    db = load_db()
+    blocked = db.get("blocked_users", [])
+    if user_id in blocked:
+        blocked.remove(user_id)
+        db["blocked_users"] = blocked
+        save_db(db)
+        return True
+    return False
+
+# Lista todos os usuarios bloqueados
+def list_blocked() -> list:
+    db = load_db()
+    return db.get("blocked_users", [])
