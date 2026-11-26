@@ -914,7 +914,7 @@ def on_message(c: NewClient, message: MessageEv):
                 usando_trial = True
             else:
                 c.reply_message(
-                    "Voce ja usou sua figurinha com som gratuita e esta sem creditos. Aguarde o adm liberar mais.",
+                    "sai dai, ja gastou seu credito",
                     message,
                     to=chat_clean,
                 )
