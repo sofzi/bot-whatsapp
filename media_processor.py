@@ -166,8 +166,8 @@ def extract_audio(input_path: str, output_audio_path: str, max_duration: int = 1
         print(f"Erro ao extrair audio: {e}")
         return False, 0
 
-# Baixa video curto de redes sociais (TikTok, Reels, Shorts, etc.)
-def download_social_video(url: str, output_mp4_path: str) -> bool:
+# Baixa video curto de redes sociais (TikTok, Reels, Shorts, etc.) com limite de tamanho e duracao
+def download_social_video(url: str, output_mp4_path: str, max_filesize_mb: int = 50, max_duration_sec: int = 300) -> bool:
     try:
         if os.path.exists(output_mp4_path):
             os.remove(output_mp4_path)
@@ -179,13 +179,16 @@ def download_social_video(url: str, output_mp4_path: str) -> bool:
             "quiet": True,
             "no_warnings": True,
             "nocheckcertificate": True,
+            "socket_timeout": 20,
+            "max_filesize": max_filesize_mb * 1024 * 1024,
+            "match_filter": yt_dlp.utils.match_filter_func(f"duration <= {max_duration_sec}"),
             "ffmpeg_location": FFMPEG_BIN,
             "merge_output_format": "mp4",
         }
         with yt_dlp.YoutubeDL(ydl_opts) as ydl:
             ydl.download([url])
 
-        return os.path.exists(output_mp4_path)
+        return os.path.exists(output_mp4_path) and os.path.getsize(output_mp4_path) > 0
     except Exception as e:
         print(f"Erro ao baixar video da URL: {e}")
         return False

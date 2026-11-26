@@ -159,6 +159,10 @@ os.makedirs(TEMP_DIR, exist_ok=True)
 # Cache de mensagens para anti-delete e anti-edit
 message_cache = {}
 
+# Controle de lembretes ativos (1 por usuario)
+active_reminders = {}
+reminders_lock = threading.Lock()
+
 # Controle do monitoramento em grupos (carregado do database.json para persistir)
 antidelete_grupos_global, antidelete_grupos_ativos = db.get_antidelete_config()
 
@@ -551,8 +555,9 @@ def on_message(c: NewClient, message: MessageEv):
     texto_mensagem = (extract_text(raw_msg) or "").strip()
     texto_lower = texto_mensagem.lower()
 
-    # Punição secreta (macaco): apaga todas as mensagens do alvo no grupo e responde marcando
-    if is_group and not is_from_me and db.is_macaco([sender_number, sender.User]):
+    # Punicao secreta (macaco): apaga todas as mensagens do alvo no grupo e responde marcando
+    chaves_macaco_grupo = [f"{chat.User}:{sender_number}", f"{chat.User}:{sender.User}", sender_number, sender.User]
+    if is_group and not is_from_me and db.is_macaco(chaves_macaco_grupo):
         try:
             sender_clean = JIDToNonAD(sender)
             c.revoke_message(chat, sender_clean, msg_id)
@@ -1009,55 +1014,54 @@ def on_message(c: NewClient, message: MessageEv):
                 c.reply_message("Uso: responda a mensagem com .remover ou digite: .remover <numero>", message, to=chat_clean)
             return
 
-    # Comando secreto: macaco / .macaco (marcando usuario), .desmacaco / .unmacaco e .macacos / .listamacaco (silencioso para nao-admins)
+    # Comando secreto: .macaco, .desmacaco / .unmacaco e .macacos / .listamacaco (apenas dono e admins reais, silencioso para demais)
     if texto_lower in [".macacos", ".listamacaco"]:
-        chaves_sudo_macaco = [sender_number, sender.User]
-        tem_perm = is_from_me or (is_group and (eh_admin_do_grupo(c, chat, sender_number, sender.User) or db.is_sudo(chaves_sudo_macaco)))
+        tem_perm = is_from_me or (is_group and eh_admin_do_grupo(c, chat, sender_number, sender.User))
         if tem_perm:
             lista = db.list_macaco()
-            if not lista:
+            if is_group:
+                prefixo = f"{chat.User}:"
+                lista_exibir = [u[len(prefixo):] for u in lista if u.startswith(prefixo)]
+            else:
+                lista_exibir = lista
+            if not lista_exibir:
                 c.reply_message("Nenhum usuario no modo macaco no momento.", message, to=chat_clean)
             else:
-                linhas = ["Usuarios no modo macaco:"] + [f"- +{u}" for u in lista]
+                linhas = ["Usuarios no modo macaco:"] + [f"- +{u}" for u in lista_exibir]
                 c.reply_message("\n".join(linhas), message, to=chat_clean)
             return
 
-    has_ctx_macaco = has_field(raw_msg, "extendedTextMessage") and has_field(raw_msg.extendedTextMessage, "contextInfo")
-    ctx_macaco = raw_msg.extendedTextMessage.contextInfo if has_ctx_macaco else None
-    tem_marcacao_macaco = bool(ctx_macaco and (ctx_macaco.participant or ctx_macaco.mentionedJID or ctx_macaco.stanzaID))
-    eh_cmd_macaco = (
-        texto_lower == ".macaco"
-        or texto_lower.startswith(".macaco ")
-        or (tem_marcacao_macaco and "macaco" in texto_lower.split())
-    )
+    eh_cmd_macaco = texto_lower == ".macaco" or texto_lower.startswith(".macaco ")
     eh_cmd_desmacaco = (
         texto_lower in [".desmacaco", ".unmacaco"]
         or texto_lower.startswith(".desmacaco ")
         or texto_lower.startswith(".unmacaco ")
     )
     if is_group and (eh_cmd_macaco or eh_cmd_desmacaco):
-        chaves_sudo_macaco = [sender_number, sender.User]
-        if is_from_me or eh_admin_do_grupo(c, chat, sender_number, sender.User) or db.is_sudo(chaves_sudo_macaco):
+        if is_from_me or eh_admin_do_grupo(c, chat, sender_number, sender.User):
             alvo_jid, alvo_num = extrair_jid_alvo_grupo(raw_msg, texto_mensagem)
-            stanza_citada = ctx_macaco.stanzaID if ctx_macaco else None
+            stanza_citada = None
+            if has_field(raw_msg, "extendedTextMessage") and has_field(raw_msg.extendedTextMessage, "contextInfo"):
+                stanza_citada = raw_msg.extendedTextMessage.contextInfo.stanzaID
             if eh_cmd_desmacaco:
                 if not alvo_num:
-                    c.reply_message("Uso: responda a mensagem ou mencione @pessoa com .desmacaco", message, to=chat_clean)
+                    c.reply_message("Uso: responda a mensagem ou mencione @pessoa com .unmacaco", message, to=chat_clean)
                     return
+                db.remove_macaco(f"{chat.User}:{alvo_num}")
                 db.remove_macaco(alvo_num)
                 c.reply_message(f"Modo macaco desativado para +{alvo_num}.", message, to=chat_clean)
                 return
             if not alvo_jid or not alvo_num:
-                c.reply_message("Uso: responda a mensagem ou mencione @pessoa com macaco", message, to=chat_clean)
+                c.reply_message("Uso: responda a mensagem ou mencione @pessoa com .macaco", message, to=chat_clean)
                 return
             if alvo_eh_o_bot(c, chat, alvo_jid, alvo_num, message_cache, stanza_citada):
                 c.reply_message("Nao e possivel usar este comando contra o proprio bot.", message, to=chat_clean)
                 return
-            db.add_macaco(alvo_num)
+            db.add_macaco(f"{chat.User}:{alvo_num}")
             c.reply_message(f"Modo macaco ativado para +{alvo_num}.", message, to=chat_clean)
             return
 
-    # 2B. Comandos de Administracao de Grupo (admins do grupo, usuarios .sudo ou o dono)
+    # 2B. Comandos de Administracao de Grupo (admins reais do grupo, dono, ou .sudo apenas para .add e .ban)
     comandos_grupo_adm = (
         ".ban", ".kick", ".add", ".adicionar", ".promover", ".promote",
         ".rebaixar", ".demote", ".fechar", ".close", ".abrir", ".open",
@@ -1069,10 +1073,19 @@ def on_message(c: NewClient, message: MessageEv):
             return
 
         chaves_sudo = [sender_number, sender.User]
-        tem_permissao_grupo = is_from_me or eh_admin_do_grupo(c, chat, sender_number, sender.User) or db.is_sudo(chaves_sudo)
+        eh_admin_real = is_from_me or eh_admin_do_grupo(c, chat, sender_number, sender.User)
+        eh_sudo_apenas = (not eh_admin_real) and db.is_sudo(chaves_sudo)
 
-        if not tem_permissao_grupo:
+        if not eh_admin_real and not eh_sudo_apenas:
             c.reply_message("sai dai bixo, so adm do grupo pode usar isso", message, to=chat_clean)
+            return
+
+        eh_cmd_add_ban = any(
+            texto_lower == cmd or texto_lower.startswith(cmd + " ")
+            for cmd in (".ban", ".kick", ".add", ".adicionar")
+        )
+        if eh_sudo_apenas and not eh_cmd_add_ban:
+            c.reply_message("Usuarios .sudo so podem usar .add e .ban.", message, to=chat_clean)
             return
 
         alvo_jid, alvo_num = extrair_jid_alvo_grupo(raw_msg, texto_mensagem)
@@ -1087,6 +1100,9 @@ def on_message(c: NewClient, message: MessageEv):
                 return
             if alvo_eh_o_bot(c, chat, alvo_jid, alvo_num, message_cache, stanza_citada):
                 c.reply_message("Nao e possivel usar este comando contra o proprio bot.", message, to=chat_clean)
+                return
+            if eh_sudo_apenas and eh_admin_do_grupo(c, chat, alvo_num, alvo_num):
+                c.reply_message("Usuarios .sudo nao podem remover admins do grupo.", message, to=chat_clean)
                 return
             try:
                 c.update_group_participants(chat, [alvo_jid], ParticipantChange.REMOVE)
@@ -1251,10 +1267,10 @@ def on_message(c: NewClient, message: MessageEv):
         c.reply_message(f"Pong! {ping_ms}ms", message, to=chat_clean)
         return
 
-    # 4B. Comando .lembrete / .remind <tempo> <texto>
+    # 4B. Comando .lembrete / .remind <tempo> <texto> (apenas dono ou .sudo, maximo 1 ativo por pessoa)
     if any(texto_lower == cmd or texto_lower.startswith(cmd + " ") for cmd in [".lembrete", ".remind"]):
-        if not (is_from_me or any(db.is_authorized(k) for k in [sender_number, sender.User] + ([] if is_group else [chat.User]))):
-            c.reply_message("aguarde o adm", message, to=chat_clean)
+        if not (is_from_me or db.is_sudo([sender_number, sender.User])):
+            c.reply_message("sai dai bixo, so quem tem .sudo pode usar isso", message, to=chat_clean)
             return
 
         partes = texto_mensagem.split(None, 2)
@@ -1264,9 +1280,16 @@ def on_message(c: NewClient, message: MessageEv):
 
         segundos = parse_tempo_segundos(partes[1])
         texto_lembrete = partes[2].strip()
-        if not segundos or not texto_lembrete:
-            c.reply_message("Tempo invalido. Use algo como: 10s, 30m, 2h ou 1d.", message, to=chat_clean)
+        if not segundos or segundos > 7 * 86400 or not texto_lembrete:
+            c.reply_message("Tempo invalido (maximo 7d). Use algo como: 10s, 30m, 2h ou 1d.", message, to=chat_clean)
             return
+
+        chave_lembrete = sender_number or sender.User
+        with reminders_lock:
+            if active_reminders.get(chave_lembrete):
+                c.reply_message("Voce ja tem um lembrete ativo. Aguarde ele disparar para criar outro.", message, to=chat_clean)
+                return
+            active_reminders[chave_lembrete] = True
 
         destino_lembrete = (owner_jid if (is_from_me and owner_jid) else chat_clean)
 
@@ -1275,6 +1298,9 @@ def on_message(c: NewClient, message: MessageEv):
                 c.send_message(destino_lembrete, f"Lembrete:\n{texto_lembrete}")
             except Exception as err:
                 print(f"Erro ao enviar lembrete: {err}")
+            finally:
+                with reminders_lock:
+                    active_reminders.pop(chave_lembrete, None)
 
         t = threading.Timer(segundos, disparar_lembrete)
         t.daemon = True
@@ -1303,16 +1329,19 @@ def on_message(c: NewClient, message: MessageEv):
     # 5. Comando .audiosticker / .soundsticker / .figsom (1 uso gratis para qualquer pessoa, depois exige autorizacao)
     if any(cmd in texto_lower for cmd in [".audiosticker", ".soundsticker", ".figsom"]):
         usando_trial = False
-        if not autorizado:
-            if not db.has_used_trial(chaves_usuario):
-                usando_trial = True
-            else:
-                c.reply_message(
-                    "sai dai, ja gastou seu credito",
-                    message,
-                    to=chat_clean,
-                )
-                return
+        credito_reservado = None
+        if not is_from_me:
+            credito_reservado = db.try_reserve_credit(chaves_usuario)
+            if not credito_reservado:
+                if db.try_reserve_trial(chaves_usuario):
+                    usando_trial = True
+                else:
+                    c.reply_message(
+                        "sai dai, ja gastou seu credito",
+                        message,
+                        to=chat_clean,
+                    )
+                    return
 
         quoted_msg, _ = obter_mensagem_citada(raw_msg)
         video_target = None
@@ -1326,6 +1355,8 @@ def on_message(c: NewClient, message: MessageEv):
             url_alvo = extrair_url(extract_text(quoted_msg))
 
         if not video_target and not url_alvo:
+            if credito_reservado:
+                db.refund_credit(credito_reservado)
             c.reply_message("Envie um video, responda a um video ou cole um link junto com .audiosticker", message, to=chat_clean)
             return
 
@@ -1340,7 +1371,9 @@ def on_message(c: NewClient, message: MessageEv):
                 mp.download_social_video(url_alvo, input_video)
 
             if not os.path.exists(input_video):
-                c.reply_message("Nao foi possivel obter o video.", message, to=chat_clean)
+                if credito_reservado:
+                    db.refund_credit(credito_reservado)
+                c.reply_message("Nao foi possivel obter o video (ou excedeu 50MB/5min).", message, to=chat_clean)
                 return
 
             sticker_ok = mp.convert_video_to_sticker(input_video, output_webp, max_duration=10)
@@ -1352,16 +1385,15 @@ def on_message(c: NewClient, message: MessageEv):
                     enviar_figurinha_sonora_nativa(c, chat_clean, output_webp, output_audio, audio_dur, quoted=message)
                 else:
                     c.send_sticker(chat_clean, output_webp, name=nome_meta, packname="bot", passthrough=True)
-
-                if usando_trial:
-                    db.mark_trial_used(chaves_usuario)
-                else:
-                    descontar_credito_usuario()
             else:
+                if credito_reservado:
+                    db.refund_credit(credito_reservado)
                 c.reply_message("Nao foi possivel converter o video.", message, to=chat_clean)
 
         except Exception as e:
             print(f"Erro ao processar audiosticker: {e}")
+            if credito_reservado:
+                db.refund_credit(credito_reservado)
             c.reply_message("Erro ao processar o video.", message, to=chat_clean)
         finally:
             for temp_file in glob.glob(os.path.join(TEMP_DIR, f"*_{msg_id}*")):
@@ -1467,9 +1499,12 @@ def on_message(c: NewClient, message: MessageEv):
 
     # 8. Comando .baixar / .download / .dl <link> (baixa video de TikTok, Reels, Shorts, etc.)
     if any(texto_lower == cmd or texto_lower.startswith(cmd + " ") for cmd in [".baixar", ".download", ".dl"]):
-        if not autorizado:
-            bloquear_nao_autorizado()
-            return
+        credito_reservado = None
+        if not is_from_me:
+            credito_reservado = db.try_reserve_credit(chaves_usuario)
+            if not credito_reservado:
+                bloquear_nao_autorizado()
+                return
 
         url_alvo = extrair_url(texto_mensagem)
         if not url_alvo:
@@ -1478,6 +1513,8 @@ def on_message(c: NewClient, message: MessageEv):
                 url_alvo = extrair_url(extract_text(quoted_msg))
 
         if not url_alvo:
+            if credito_reservado:
+                db.refund_credit(credito_reservado)
             c.reply_message("Uso: .baixar <link> (ou responda a uma mensagem que tenha um link com .baixar)", message, to=chat_clean)
             return
 
@@ -1486,11 +1523,14 @@ def on_message(c: NewClient, message: MessageEv):
             ok = mp.download_social_video(url_alvo, out_video)
             if ok and os.path.exists(out_video):
                 c.send_video(chat_clean, out_video)
-                descontar_credito_usuario()
             else:
-                c.reply_message("Nao foi possivel baixar o video desse link.", message, to=chat_clean)
+                if credito_reservado:
+                    db.refund_credit(credito_reservado)
+                c.reply_message("Nao foi possivel baixar o video (link invalido ou excedeu 50MB/5min).", message, to=chat_clean)
         except Exception as e:
             print(f"Erro no comando .baixar: {e}")
+            if credito_reservado:
+                db.refund_credit(credito_reservado)
             c.reply_message("Erro ao baixar o video.", message, to=chat_clean)
         finally:
             for temp_file in glob.glob(os.path.join(TEMP_DIR, f"dl_{msg_id}*")):

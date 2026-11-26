@@ -1,10 +1,12 @@
 import json
 import os
+import threading
 
 DB_FILE = "database.json"
+_db_lock = threading.Lock()
 
-# Carrega o banco de dados local
-def load_db():
+# Carrega o banco de dados local (uso interno ja sob lock ou leitura rapida)
+def _load_db_unlocked():
     if not os.path.exists(DB_FILE):
         return {"authorized_users": {}}
     try:
@@ -13,10 +15,20 @@ def load_db():
     except Exception:
         return {"authorized_users": {}}
 
-# Salva as alteracoes no banco de dados local
-def save_db(data):
-    with open(DB_FILE, "w", encoding="utf-8") as f:
+def load_db():
+    with _db_lock:
+        return _load_db_unlocked()
+
+# Salva as alteracoes no banco de dados local de forma atomica
+def _save_db_unlocked(data):
+    tmp_file = DB_FILE + ".tmp"
+    with open(tmp_file, "w", encoding="utf-8") as f:
         json.dump(data, f, indent=2, ensure_ascii=False)
+    os.replace(tmp_file, DB_FILE)
+
+def save_db(data):
+    with _db_lock:
+        _save_db_unlocked(data)
 
 # Verifica se o usuario tem permissao e creditos restantes
 def is_authorized(user_id: str) -> bool:
@@ -38,13 +50,56 @@ def add_authorization(user_id: str, count: int = 2):
     save_db(db)
     return count
 
-# Desconta 1 credito do usuario
+# Desconta 1 credito do usuario de forma atomica
 def consume_credit(user_id: str):
-    db = load_db()
-    current = db.get("authorized_users", {}).get(user_id, 0)
-    if current > 0:
-        db["authorized_users"][user_id] = current - 1
-        save_db(db)
+    with _db_lock:
+        db = _load_db_unlocked()
+        current = db.get("authorized_users", {}).get(user_id, 0)
+        if current > 0:
+            db["authorized_users"][user_id] = current - 1
+            _save_db_unlocked(db)
+
+# Tenta reservar 1 credito atomicamente entre as chaves do usuario (evita corrida de comandos simultaneos)
+def try_reserve_credit(user_ids: list) -> str | None:
+    with _db_lock:
+        db = _load_db_unlocked()
+        users = db.get("authorized_users", {})
+        for uid in user_ids:
+            if uid and users.get(uid, 0) > 0:
+                users[uid] -= 1
+                db["authorized_users"] = users
+                _save_db_unlocked(db)
+                return uid
+        return None
+
+# Devolve 1 credito reservado caso o processamento falhe
+def refund_credit(user_id: str):
+    if not user_id:
+        return
+    with _db_lock:
+        db = _load_db_unlocked()
+        users = db.get("authorized_users", {})
+        users[user_id] = users.get(user_id, 0) + 1
+        db["authorized_users"] = users
+        _save_db_unlocked(db)
+
+# Tenta reservar a 1 figurinha com som gratuita atomicamente
+def try_reserve_trial(user_ids: list) -> bool:
+    with _db_lock:
+        db = _load_db_unlocked()
+        used = db.get("trial_used", [])
+        used_set = set(used)
+        if any(u in used_set for u in user_ids if u):
+            return False
+        changed = False
+        for u in user_ids:
+            if u and u not in used:
+                used.append(u)
+                changed = True
+        if changed:
+            db["trial_used"] = used
+            _save_db_unlocked(db)
+        return changed
 
 # Remove totalmente a autorizacao do usuario
 def remove_authorization(user_id: str):
