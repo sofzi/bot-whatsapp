@@ -34,13 +34,19 @@ class Logger(object):
 sys.stdout = Logger()
 sys.stderr = Logger()
 
-# Configura o FFmpeg no PATH local
+# Configura FFmpeg e FFprobe no PATH local
 os.makedirs("bin", exist_ok=True)
 _ffmpeg_exe = imageio_ffmpeg.get_ffmpeg_exe()
 _local_ffmpeg = os.path.join("bin", "ffmpeg.exe")
+_local_ffprobe = os.path.join("bin", "ffprobe.exe")
 if not os.path.exists(_local_ffmpeg):
     try:
         shutil.copyfile(_ffmpeg_exe, _local_ffmpeg)
+    except Exception:
+        pass
+if not os.path.exists(_local_ffprobe):
+    try:
+        shutil.copyfile(_ffmpeg_exe, _local_ffprobe)
     except Exception:
         pass
 os.environ["PATH"] = os.path.abspath("bin") + os.pathsep + os.environ.get("PATH", "")
@@ -64,11 +70,14 @@ client = NewClient("session.db")
 owner_jid = None
 owner_number = None
 
-# Desempacota mensagens encapsuladas (ex: mensagens temporarias de grupos)
+# Desempacota mensagens encapsuladas (ex: enviadas pelo celular ou temporarias)
 def desempacotar_mensagem(msg):
     if not msg:
         return msg
     for _ in range(5):
+        if hasattr(msg, "deviceSentMessage") and msg.deviceSentMessage and msg.deviceSentMessage.message:
+            msg = msg.deviceSentMessage.message
+            continue
         if hasattr(msg, "ephemeralMessage") and msg.ephemeralMessage and msg.ephemeralMessage.message:
             msg = msg.ephemeralMessage.message
             continue
@@ -120,11 +129,13 @@ def on_message(c: NewClient, message: MessageEv):
     is_group = msg_info.MessageSource.IsGroup
     sender_number = sender.User
 
-    is_from_me = msg_info.MessageSource.IsFromMe or (owner_number and sender_number == owner_number)
+    # Verifica se a mensagem veio do dono (pelo celular ou pelo cliente)
+    is_device_sent = hasattr(message.Message, "deviceSentMessage") and bool(message.Message.deviceSentMessage)
+    is_from_me = msg_info.MessageSource.IsFromMe or is_device_sent or (owner_number and sender_number == owner_number)
 
     raw_msg = desempacotar_mensagem(message.Message)
 
-    # 1. Anti-delete: detecta aviso de revogacao real (type == 0 com ID valido)
+    # 1. Anti-delete: detecta aviso de revogacao real
     protocol_msg = getattr(raw_msg, "protocolMessage", None)
     if protocol_msg and protocol_msg.type == 0 and protocol_msg.key and protocol_msg.key.ID:
         revoked_id = protocol_msg.key.ID
@@ -167,18 +178,18 @@ def on_message(c: NewClient, message: MessageEv):
             print(f"[Anti-Delete] Mensagem {revoked_id} nao estava salva no cache.")
         return
 
-    # Ignora mensagens de protocolo de sincronizacao interna
+    # Ignora mensagens internas de protocolo
     if protocol_msg:
         return
 
     # 2. Salva a mensagem recebida no cache
-    texto_mensagem = extract_text(raw_msg) or ""
+    texto_mensagem = (extract_text(raw_msg) or "").strip()
     chat_label = "Grupo" if is_group else f"Privado (+{sender_number})"
 
-    # Loga no terminal a mensagem capturada
+    # Loga no terminal
     preview = texto_mensagem[:40] if texto_mensagem else ("[midia]" if (raw_msg.imageMessage or raw_msg.videoMessage or raw_msg.audioMessage) else "")
     if preview:
-        print(f"[Mensagem salva] De +{sender_number} em {chat_label}: {preview}")
+        print(f"[Mensagem] De +{sender_number} em {chat_label}: {preview}")
 
     salved_media = None
     try:
@@ -209,12 +220,17 @@ def on_message(c: NewClient, message: MessageEv):
 
     # 3. Comandos do administrador
     if is_from_me:
-        if texto_mensagem in [".encerrar", ".desligar", ".stop"]:
-            c.reply_message("Encerrando bot...", message)
+        if texto_mensagem.lower() in [".encerrar", ".desligar", ".stop"]:
+            print("Comando de encerramento recebido pelo WhatsApp. Desligando...")
+            try:
+                dest = owner_jid if owner_jid else JIDToNonAD(chat)
+                c.send_message(dest, "Encerrando bot...")
+            except Exception:
+                pass
             time.sleep(1)
             os._exit(0)
 
-        if texto_mensagem.startswith(".authorize"):
+        if texto_mensagem.lower().startswith(".authorize"):
             partes = texto_mensagem.split()
             qtd = 2
             alvo = None
@@ -231,12 +247,14 @@ def on_message(c: NewClient, message: MessageEv):
 
             if alvo:
                 db.add_authorization(alvo, qtd)
-                c.reply_message(f"Usuario +{alvo} autorizado com {qtd} creditos.", message)
+                dest = owner_jid if owner_jid else JIDToNonAD(chat)
+                c.send_message(dest, f"Usuario +{alvo} autorizado com {qtd} creditos.")
             else:
-                c.reply_message("Uso: responda a mensagem com .authorize ou digite: .authorize <numero>", message)
+                dest = owner_jid if owner_jid else JIDToNonAD(chat)
+                c.send_message(dest, "Uso: responda a mensagem com .authorize ou digite: .authorize <numero>")
             return
 
-        if texto_mensagem.startswith(".remover"):
+        if texto_mensagem.lower().startswith(".remover"):
             partes = texto_mensagem.split()
             alvo = None
             ctx = getattr(raw_msg.extendedTextMessage, "contextInfo", None)
@@ -247,9 +265,11 @@ def on_message(c: NewClient, message: MessageEv):
 
             if alvo:
                 db.remove_authorization(alvo)
-                c.reply_message(f"Usuario +{alvo} removido.", message)
+                dest = owner_jid if owner_jid else JIDToNonAD(chat)
+                c.send_message(dest, f"Usuario +{alvo} removido.")
             else:
-                c.reply_message("Uso: responda a mensagem com .remover ou digite: .remover <numero>", message)
+                dest = owner_jid if owner_jid else JIDToNonAD(chat)
+                c.send_message(dest, "Uso: responda a mensagem com .remover ou digite: .remover <numero>")
             return
 
     # 4. Comando .audiosticker
