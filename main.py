@@ -105,7 +105,7 @@ os.environ["PATH"] = os.path.abspath("bin") + os.pathsep + os.environ.get("PATH"
 from neonize.client import NewClient, get_sidecar_from_upload
 from neonize.events import ConnectedEv, MessageEv
 from neonize.utils import extract_text
-from neonize.utils.enum import MediaType
+from neonize.utils.enum import MediaType, ParticipantChange
 from neonize.utils.jid import build_jid, JIDToNonAD
 from neonize.utils.ffmpeg import FFmpeg, FFProbeInfo, Format, Stream
 import neonize.proto.waE2E.WAWebProtobufsE2E_pb2 as wa_pb
@@ -300,6 +300,29 @@ def obter_mensagem_citada(raw_msg):
             return desempacotar_mensagem(ctx.quotedMessage), ctx
     return None, None
 
+# Extrai o JID do participante alvo em comandos de grupo (resposta, mencao ou numero)
+def extrair_jid_alvo_grupo(raw_msg, texto_mensagem: str):
+    if has_field(raw_msg, "extendedTextMessage") and has_field(raw_msg.extendedTextMessage, "contextInfo"):
+        ctx = raw_msg.extendedTextMessage.contextInfo
+        if ctx.participant:
+            user_part, _, srv_part = ctx.participant.partition("@")
+            user_clean = user_part.split(":")[0]
+            srv_clean = srv_part or "s.whatsapp.net"
+            return build_jid(user_clean, srv_clean), user_clean
+        if ctx.mentionedJID:
+            m_jid = ctx.mentionedJID[0]
+            user_part, _, srv_part = m_jid.partition("@")
+            user_clean = user_part.split(":")[0]
+            srv_clean = srv_part or "s.whatsapp.net"
+            return build_jid(user_clean, srv_clean), user_clean
+
+    partes = texto_mensagem.split()
+    if len(partes) > 1:
+        num = re.sub(r"\D", "", partes[1])
+        if num:
+            return build_jid(num, "s.whatsapp.net"), num
+    return None, None
+
 # Thread que limpa automaticamente mensagens de grupos com mais de 12 horas
 def limpar_cache_grupos_periodicamente():
     limite_segundos = 12 * 3600
@@ -486,9 +509,17 @@ def on_message(c: NewClient, message: MessageEv):
         ".limpar",
         ".clearcache",
         ".bloquear",
-        ".ban",
+        ".block",
         ".desbloquear",
-        ".unban",
+        ".unblock",
+        ".ban",
+        ".kick",
+        ".add",
+        ".adicionar",
+        ".promover",
+        ".promote",
+        ".rebaixar",
+        ".demote",
         ".logs",
         ".todos",
         ".tagall",
@@ -696,8 +727,76 @@ def on_message(c: NewClient, message: MessageEv):
                 c.reply_message("Nao foi possivel marcar os membros do grupo.", message, to=chat_clean)
             return
 
-        # Comando .bloquear / .ban (ignora usuario em silencio)
-        if texto_lower.startswith(".bloquear") or texto_lower.startswith(".ban"):
+        # Comando .ban / .kick (remove participante do grupo)
+        if texto_lower == ".ban" or texto_lower.startswith(".ban ") or texto_lower == ".kick" or texto_lower.startswith(".kick "):
+            if not is_group:
+                c.reply_message("Este comando so funciona dentro de grupos.", message, to=chat_clean)
+                return
+            alvo_jid, alvo_num = extrair_jid_alvo_grupo(raw_msg, texto_mensagem)
+            if not alvo_jid:
+                c.reply_message("Uso: responda a mensagem da pessoa com .ban ou digite .ban <numero>", message, to=chat_clean)
+                return
+            try:
+                c.update_group_participants(chat, [alvo_jid], ParticipantChange.REMOVE)
+                c.reply_message(f"Usuario +{alvo_num} removido do grupo.", message, to=chat_clean)
+            except Exception as err:
+                print(f"Erro no comando .ban: {err}")
+                c.reply_message("Nao foi possivel remover do grupo. Verifique se voce e admin do grupo.", message, to=chat_clean)
+            return
+
+        # Comando .add / .adicionar (adiciona numero ao grupo)
+        if texto_lower == ".add" or texto_lower.startswith(".add ") or texto_lower == ".adicionar" or texto_lower.startswith(".adicionar "):
+            if not is_group:
+                c.reply_message("Este comando so funciona dentro de grupos.", message, to=chat_clean)
+                return
+            alvo_jid, alvo_num = extrair_jid_alvo_grupo(raw_msg, texto_mensagem)
+            if not alvo_jid:
+                c.reply_message("Uso: .add <numero com DDD> (ex: .add 5521999999999)", message, to=chat_clean)
+                return
+            try:
+                c.update_group_participants(chat, [alvo_jid], ParticipantChange.ADD)
+                c.reply_message(f"Usuario +{alvo_num} adicionado ao grupo.", message, to=chat_clean)
+            except Exception as err:
+                print(f"Erro no comando .add: {err}")
+                c.reply_message("Nao foi possivel adicionar ao grupo. Verifique o numero, privacidade da pessoa ou se voce e admin.", message, to=chat_clean)
+            return
+
+        # Comando .promover / .promote (torna participante admin do grupo)
+        if texto_lower == ".promover" or texto_lower.startswith(".promover ") or texto_lower == ".promote" or texto_lower.startswith(".promote "):
+            if not is_group:
+                c.reply_message("Este comando so funciona dentro de grupos.", message, to=chat_clean)
+                return
+            alvo_jid, alvo_num = extrair_jid_alvo_grupo(raw_msg, texto_mensagem)
+            if not alvo_jid:
+                c.reply_message("Uso: responda a mensagem da pessoa com .promover ou digite .promover <numero>", message, to=chat_clean)
+                return
+            try:
+                c.update_group_participants(chat, [alvo_jid], ParticipantChange.PROMOTE)
+                c.reply_message(f"Usuario +{alvo_num} promovido a admin do grupo.", message, to=chat_clean)
+            except Exception as err:
+                print(f"Erro no comando .promover: {err}")
+                c.reply_message("Nao foi possivel promover. Verifique se voce e admin do grupo.", message, to=chat_clean)
+            return
+
+        # Comando .rebaixar / .demote (remove admin do participante no grupo)
+        if texto_lower == ".rebaixar" or texto_lower.startswith(".rebaixar ") or texto_lower == ".demote" or texto_lower.startswith(".demote "):
+            if not is_group:
+                c.reply_message("Este comando so funciona dentro de grupos.", message, to=chat_clean)
+                return
+            alvo_jid, alvo_num = extrair_jid_alvo_grupo(raw_msg, texto_mensagem)
+            if not alvo_jid:
+                c.reply_message("Uso: responda a mensagem da pessoa com .rebaixar ou digite .rebaixar <numero>", message, to=chat_clean)
+                return
+            try:
+                c.update_group_participants(chat, [alvo_jid], ParticipantChange.DEMOTE)
+                c.reply_message(f"Admin removido de +{alvo_num}.", message, to=chat_clean)
+            except Exception as err:
+                print(f"Erro no comando .rebaixar: {err}")
+                c.reply_message("Nao foi possivel rebaixar. Verifique se voce e admin do grupo.", message, to=chat_clean)
+            return
+
+        # Comando .bloquear / .block (ignora usuario em silencio no bot)
+        if texto_lower.startswith(".bloquear") or texto_lower.startswith(".block"):
             partes = texto_mensagem.split()
             alvos = set()
 
@@ -723,8 +822,8 @@ def on_message(c: NewClient, message: MessageEv):
                 c.reply_message("Uso: responda a mensagem com .bloquear ou digite: .bloquear <numero>", message, to=chat_clean)
             return
 
-        # Comando .desbloquear / .unban
-        if texto_lower.startswith(".desbloquear") or texto_lower.startswith(".unban"):
+        # Comando .desbloquear / .unblock
+        if texto_lower.startswith(".desbloquear") or texto_lower.startswith(".unblock"):
             partes = texto_mensagem.split()
             alvos = set()
 
@@ -861,8 +960,12 @@ def on_message(c: NewClient, message: MessageEv):
                 "- .lista / .list : lista usuarios autorizados e creditos",
                 "- .status / .info : mostra tempo ligado, cache e monitoramento",
                 "- .limpar / .clearcache : limpa todo o cache e arquivos temporarios",
-                "- .bloquear / .ban [numero] : ignora usuario em silencio",
-                "- .desbloquear / .unban [numero] : remove usuario do bloqueio",
+                "- .bloquear / .block [numero] : ignora usuario em silencio no bot",
+                "- .desbloquear / .unblock [numero] : remove usuario do bloqueio no bot",
+                "- .ban / .kick [numero] : remove participante do grupo",
+                "- .add / .adicionar <numero> : adiciona numero ao grupo",
+                "- .promover / .promote [numero] : torna participante admin do grupo",
+                "- .rebaixar / .demote [numero] : remove admin do participante no grupo",
                 "- .logs : envia as ultimas 20 linhas do bot.log no seu privado",
                 "- .todos / .tagall <msg> : marca todos no grupo silenciosamente",
                 "- .antidelete : ativa anti-delete e anti-edit em grupos",
