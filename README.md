@@ -29,6 +29,7 @@ Bot de WhatsApp em Python para criacao de figurinhas com som, download de videos
 - `.fechar` / `.close`: fecha o grupo para que apenas admins enviem mensagens (somente admins do grupo ou o dono).
 - `.abrir` / `.open`: abre o grupo para todos os participantes enviarem mensagens (somente admins do grupo ou o dono).
 - `.link` / `.invitelink`: gera e envia o link de convite do grupo (somente admins do grupo ou o dono).
+- `.apagar` / `.del`: apaga a mensagem marcada para todos no grupo (somente admins do grupo ou o dono).
 - `.logs`: envia as ultimas 20 linhas do `bot.log` no privado do dono.
 - `.todos` / `.tagall <mensagem>`: envia uma mensagem em grupo marcando todos os participantes silenciosamente.
 - `.antidelete`: ativa o monitoramento de mensagens apagadas e editadas para grupos (mensagens de grupos sao limpas automaticamente do cache apos 12 horas).

@@ -899,7 +899,8 @@ def on_message(c: NewClient, message: MessageEv):
     # 2B. Comandos de Administracao de Grupo (somente admins do grupo ou o dono)
     comandos_grupo_adm = (
         ".ban", ".kick", ".add", ".adicionar", ".promover", ".promote",
-        ".rebaixar", ".demote", ".fechar", ".close", ".abrir", ".open", ".link", ".invitelink",
+        ".rebaixar", ".demote", ".fechar", ".close", ".abrir", ".open",
+        ".link", ".invitelink", ".apagar", ".del",
     )
     if any(texto_lower == cmd or texto_lower.startswith(cmd + " ") for cmd in comandos_grupo_adm):
         if not is_group:
@@ -994,6 +995,24 @@ def on_message(c: NewClient, message: MessageEv):
                 c.reply_message("Nao foi possivel obter o link. Verifique se o numero do bot e admin.", message, to=chat_clean)
             return
 
+        # .apagar / .del (apaga a mensagem marcada para todos no grupo)
+        if texto_lower in [".apagar", ".del"]:
+            _, ctx = obter_mensagem_citada(raw_msg)
+            if not ctx or not ctx.stanzaID:
+                c.reply_message("Responda a mensagem que deseja apagar com .apagar", message, to=chat_clean)
+                return
+            try:
+                if ctx.participant:
+                    user_part, _, srv_part = ctx.participant.partition("@")
+                    sender_target = build_jid(user_part.split(":")[0], srv_part or "s.whatsapp.net")
+                else:
+                    sender_target = owner_jid if owner_jid else chat_clean
+                c.revoke_message(chat, sender_target, ctx.stanzaID)
+            except Exception as err:
+                print(f"Erro no comando .apagar: {err}")
+                c.reply_message("Nao foi possivel apagar a mensagem. Verifique se voce/bot e admin do grupo.", message, to=chat_clean)
+            return
+
     # 3. Comando .comandos / .ajuda / .help / .commands
     if texto_lower in [".comandos", ".ajuda", ".help", ".commands", ".menu"]:
         linhas = [
@@ -1024,6 +1043,7 @@ def on_message(c: NewClient, message: MessageEv):
                 "- .fechar / .close : fecha o grupo (so admins falam)",
                 "- .abrir / .open : abre o grupo para todos",
                 "- .link / .invitelink : envia o link de convite do grupo",
+                "- .apagar / .del : apaga a mensagem marcada para todos no grupo",
                 "- .logs : envia as ultimas 20 linhas do bot.log no seu privado",
                 "- .todos / .tagall <msg> : marca todos no grupo silenciosamente",
                 "- .antidelete : ativa anti-delete e anti-edit em grupos",
