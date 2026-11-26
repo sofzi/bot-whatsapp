@@ -351,25 +351,33 @@ def eh_admin_do_grupo(c: NewClient, chat, sender_number: str, sender_user: str) 
         print(f"Erro ao verificar admin do grupo: {err}")
     return False
 
-# Verifica se o JID ou numero alvo pertence ao proprio bot/dono (para impedir que comandos o afetem)
-def alvo_eh_o_bot(c: NewClient, chat, alvo_jid, alvo_num: str, msg_cache: dict = None, stanza_id: str = None) -> bool:
-    if owner_number and alvo_num == owner_number:
+# Verifica se o alvo corresponde a algum dos IDs de referencia (incluindo LID/PN no grupo)
+def alvo_corresponde_ids(c: NewClient, chat, alvo_num: str, ids_ref: set, msg_cache: dict = None, stanza_id: str = None) -> bool:
+    ids_validos = {x for x in ids_ref if x}
+    if not ids_validos:
+        return False
+    if alvo_num and alvo_num in ids_validos:
         return True
     if stanza_id and msg_cache and stanza_id in msg_cache:
-        if msg_cache[stanza_id].get("sender_number") == owner_number:
+        if msg_cache[stanza_id].get("sender_number") in ids_validos:
             return True
     try:
-        if chat and chat.Server == "g.us" and owner_number:
+        if chat and chat.Server == "g.us" and alvo_num:
             g_info = c.get_group_info(chat)
             for p in g_info.Participants:
                 pn = getattr(p.PhoneNumber, "User", "") or getattr(p.JID, "User", "")
                 lid = getattr(p.LID, "User", "")
                 jid_u = getattr(p.JID, "User", "")
-                if owner_number in {pn, jid_u} and alvo_num in {pn, jid_u, lid}:
+                participante_ids = {x for x in [pn, jid_u, lid] if x}
+                if (ids_validos & participante_ids) and (alvo_num in participante_ids):
                     return True
     except Exception:
         pass
     return False
+
+# Verifica se o JID ou numero alvo pertence ao proprio bot/dono (para impedir que comandos o afetem)
+def alvo_eh_o_bot(c: NewClient, chat, alvo_jid, alvo_num: str, msg_cache: dict = None, stanza_id: str = None) -> bool:
+    return alvo_corresponde_ids(c, chat, alvo_num, {owner_number}, msg_cache, stanza_id)
 
 # Thread que limpa automaticamente mensagens de grupos com mais de 12 horas
 def limpar_cache_grupos_periodicamente():
@@ -1094,6 +1102,9 @@ def on_message(c: NewClient, message: MessageEv):
             if not alvo_jid:
                 c.reply_message("Uso: responda a mensagem da pessoa com .promover ou digite .promover <numero>", message, to=chat_clean)
                 return
+            if not is_from_me and not eh_admin_do_grupo(c, chat, sender_number, sender.User) and alvo_corresponde_ids(c, chat, alvo_num, {sender_number, sender.User}, message_cache, stanza_citada):
+                c.reply_message("Usuarios .sudo nao podem se promover a admin.", message, to=chat_clean)
+                return
             try:
                 c.update_group_participants(chat, [alvo_jid], ParticipantChange.PROMOTE)
                 c.reply_message(f"Usuario +{alvo_num} promovido a admin do grupo.", message, to=chat_clean)
@@ -1153,6 +1164,10 @@ def on_message(c: NewClient, message: MessageEv):
             _, ctx = obter_mensagem_citada(raw_msg)
             if not ctx or not ctx.stanzaID:
                 c.reply_message("Responda a mensagem que deseja apagar com .apagar", message, to=chat_clean)
+                return
+            target_num = ctx.participant.split("@")[0].split(":")[0] if ctx.participant else ""
+            if not is_from_me and alvo_eh_o_bot(c, chat, None, target_num, message_cache, ctx.stanzaID):
+                c.reply_message("Nao e possivel usar este comando contra o proprio bot.", message, to=chat_clean)
                 return
             try:
                 if ctx.participant:
