@@ -159,9 +159,8 @@ os.makedirs(TEMP_DIR, exist_ok=True)
 # Cache de mensagens para anti-delete e anti-edit
 message_cache = {}
 
-# Controle do monitoramento em grupos (desativado por padrao)
-antidelete_grupos_global = False
-antidelete_grupos_ativos = set()
+# Controle do monitoramento em grupos (carregado do database.json para persistir)
+antidelete_grupos_global, antidelete_grupos_ativos = db.get_antidelete_config()
 
 # Inicializa cliente do WhatsApp
 client = NewClient("session.db")
@@ -550,28 +549,32 @@ def on_message(c: NewClient, message: MessageEv):
 
     # 2. Comandos de Administrador (Exclusivos do Dono)
     if is_from_me:
-        # Comando .antidelete (ativa leitura de grupos)
+        # Comando .antidelete (ativa leitura de grupos e salva no database.json)
         if texto_lower == ".antidelete":
             if is_group:
                 antidelete_grupos_ativos.add(chat.User)
-                print(f"[Anti-Delete] Ativado para o grupo {chat.User}")
-                c.reply_message("Anti-delete ativado neste grupo.", message, to=chat_clean)
+                db.save_antidelete_config(antidelete_grupos_global, antidelete_grupos_ativos)
+                print(f"[Anti-Delete] Ativado e salvo para o grupo {chat.User}")
+                c.reply_message("Anti-delete ativado e salvo neste grupo.", message, to=chat_clean)
             else:
                 antidelete_grupos_global = True
-                print("[Anti-Delete] Ativado para todos os grupos.")
-                c.reply_message("Anti-delete ativado para todos os grupos.", message, to=chat_clean)
+                db.save_antidelete_config(antidelete_grupos_global, antidelete_grupos_ativos)
+                print("[Anti-Delete] Ativado e salvo para todos os grupos.")
+                c.reply_message("Anti-delete ativado e salvo para todos os grupos.", message, to=chat_clean)
             return
 
-        # Comando .stopantidelete (para leitura de grupos)
+        # Comando .stopantidelete (para leitura de grupos e salva no database.json)
         if texto_lower == ".stopantidelete":
             if is_group:
                 antidelete_grupos_ativos.discard(chat.User)
-                print(f"[Anti-Delete] Desativado para o grupo {chat.User}")
+                db.save_antidelete_config(antidelete_grupos_global, antidelete_grupos_ativos)
+                print(f"[Anti-Delete] Desativado e salvo para o grupo {chat.User}")
                 c.reply_message("Anti-delete desativado neste grupo.", message, to=chat_clean)
             else:
                 antidelete_grupos_global = False
                 antidelete_grupos_ativos.clear()
-                print("[Anti-Delete] Desativado em todos os grupos.")
+                db.save_antidelete_config(antidelete_grupos_global, antidelete_grupos_ativos)
+                print("[Anti-Delete] Desativado e salvo em todos os grupos.")
                 c.reply_message("Anti-delete desativado em todos os grupos.", message, to=chat_clean)
             return
 

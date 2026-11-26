@@ -109,3 +109,17 @@ def mark_trial_used(user_ids: list):
     if changed:
         db["trial_used"] = used
         save_db(db)
+
+# Carrega a configuracao salva do anti-delete em grupos
+def get_antidelete_config() -> tuple[bool, set]:
+    db = load_db()
+    is_global = bool(db.get("antidelete_global", False))
+    groups = set(db.get("antidelete_groups", []))
+    return is_global, groups
+
+# Salva a configuracao do anti-delete em grupos
+def save_antidelete_config(is_global: bool, groups: set):
+    db = load_db()
+    db["antidelete_global"] = bool(is_global)
+    db["antidelete_groups"] = sorted(list(groups))
+    save_db(db)
