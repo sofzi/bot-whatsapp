@@ -124,11 +124,11 @@ def on_message(c: NewClient, message: MessageEv):
 
     raw_msg = desempacotar_mensagem(message.Message)
 
-    # 1. Anti-delete: detecta aviso de revogacao (quando alguem apaga para todos)
+    # 1. Anti-delete: detecta aviso de revogacao real (type == 0 com ID valido)
     protocol_msg = getattr(raw_msg, "protocolMessage", None)
-    if protocol_msg and protocol_msg.key:
+    if protocol_msg and protocol_msg.type == 0 and protocol_msg.key and protocol_msg.key.ID:
         revoked_id = protocol_msg.key.ID
-        print(f"[Anti-Delete] Evento de apagamento recebido para mensagem ID: {revoked_id}")
+        print(f"[Anti-Delete] Mensagem apagada detectada! ID: {revoked_id}")
 
         if revoked_id in message_cache:
             deleted_info = message_cache[revoked_id]
@@ -137,7 +137,7 @@ def on_message(c: NewClient, message: MessageEv):
             content = deleted_info["text"]
             media_path = deleted_info.get("media_path")
 
-            print(f"[Anti-Delete] Mensagem encontrada no cache! Enviando para o dono ({owner_number})...")
+            print(f"[Anti-Delete] Resgatado do cache (+{author}): {content or '[midia]'}")
 
             alerta = (
                 "Mensagem apagada detectada:\n"
@@ -160,16 +160,25 @@ def on_message(c: NewClient, message: MessageEv):
                         c.send_video(dest, media_path)
                     elif media_path.endswith((".ogg", ".mp3")):
                         c.send_audio(dest, media_path)
-                print("[Anti-Delete] Alerta enviado com sucesso.")
+                print("[Anti-Delete] Alerta enviado para o seu privado com sucesso.")
             except Exception as err:
                 print(f"[Anti-Delete] Erro ao enviar alerta: {err}")
         else:
-            print(f"[Anti-Delete] Mensagem {revoked_id} nao estava no cache (enviada antes do bot ligar).")
+            print(f"[Anti-Delete] Mensagem {revoked_id} nao estava salva no cache.")
+        return
+
+    # Ignora mensagens de protocolo de sincronizacao interna
+    if protocol_msg:
         return
 
     # 2. Salva a mensagem recebida no cache
     texto_mensagem = extract_text(raw_msg) or ""
     chat_label = "Grupo" if is_group else f"Privado (+{sender_number})"
+
+    # Loga no terminal a mensagem capturada
+    preview = texto_mensagem[:40] if texto_mensagem else ("[midia]" if (raw_msg.imageMessage or raw_msg.videoMessage or raw_msg.audioMessage) else "")
+    if preview:
+        print(f"[Mensagem salva] De +{sender_number} em {chat_label}: {preview}")
 
     salved_media = None
     try:
