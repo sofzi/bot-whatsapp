@@ -7,25 +7,41 @@ import yt_dlp
 # Pega o caminho do binario do FFmpeg portatil
 FFMPEG_BIN = imageio_ffmpeg.get_ffmpeg_exe()
 
-# Converte video para figurinha animada webp de ate 5 segundos
+# Converte video para figurinha animada webp de ate 5 segundos (respeitando limite de 500 KB do WhatsApp)
 def convert_video_to_sticker(input_path: str, output_webp_path: str, max_duration: int = 5) -> bool:
+    degraus = [
+        (15, 55, 512),
+        (12, 45, 512),
+        (10, 35, 448),
+        (8, 25, 384),
+        (6, 20, 320),
+    ]
     try:
-        cmd = [
-            FFMPEG_BIN,
-            "-y",
-            "-t", str(max_duration),
-            "-i", input_path,
-            "-vf", "fps=15,scale=512:512:force_original_aspect_ratio=decrease,pad=512:512:(ow-iw)/2:(oh-ih)/2:color=0x00000000",
-            "-c:v", "libwebp_anim",
-            "-loop", "0",
-            "-preset", "picture",
-            "-q:v", "50",
-            "-compression_level", "4",
-            "-an",
-            output_webp_path
-        ]
-        result = subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
-        return result.returncode == 0 and os.path.exists(output_webp_path)
+        for fps, q, detail in degraus:
+            vf = (
+                f"fps={fps},scale={detail}:{detail}:force_original_aspect_ratio=decrease,"
+                f"scale=512:512:force_original_aspect_ratio=decrease,"
+                f"pad=512:512:(ow-iw)/2:(oh-ih)/2:color=0x00000000"
+            )
+            cmd = [
+                FFMPEG_BIN,
+                "-y",
+                "-t", str(max_duration),
+                "-i", input_path,
+                "-vf", vf,
+                "-c:v", "libwebp_anim",
+                "-loop", "0",
+                "-preset", "picture",
+                "-q:v", str(q),
+                "-compression_level", "4",
+                "-an",
+                output_webp_path
+            ]
+            result = subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+            if result.returncode == 0 and os.path.exists(output_webp_path):
+                if os.path.getsize(output_webp_path) <= 495_000:
+                    return True
+        return os.path.exists(output_webp_path) and os.path.getsize(output_webp_path) > 0
     except Exception as e:
         print(f"Erro ao converter video em sticker: {e}")
         return False
@@ -97,8 +113,8 @@ def convert_sticker_to_media(input_webp_path: str, output_png_path: str, output_
         print(f"Erro ao converter sticker para midia: {e}")
         return False, ""
 
-# Extrai o audio do video nos primeiros 5 segundos para formato compativel com WhatsApp
-def extract_audio(input_path: str, output_audio_path: str, max_duration: int = 5) -> bool:
+# Extrai o audio do video nos primeiros 5 segundos em Ogg/Opus 48kHz para figurinha sonora nativa
+def extract_audio(input_path: str, output_audio_path: str, max_duration: int = 5) -> tuple[bool, int]:
     try:
         cmd = [
             FFMPEG_BIN,
@@ -106,15 +122,28 @@ def extract_audio(input_path: str, output_audio_path: str, max_duration: int = 5
             "-t", str(max_duration),
             "-i", input_path,
             "-vn",
+            "-ar", "48000",
+            "-ac", "1",
             "-c:a", "libopus",
             "-b:a", "64k",
             output_audio_path
         ]
         result = subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
-        return result.returncode == 0 and os.path.exists(output_audio_path)
+        if result.returncode != 0 or not os.path.exists(output_audio_path) or os.path.getsize(output_audio_path) == 0:
+            return False, 0
+
+        # Le a duracao real do audio extraido
+        dur = max_duration
+        probe = subprocess.run([FFMPEG_BIN, "-i", output_audio_path], capture_output=True, text=True, errors="ignore")
+        import re
+        m = re.search(r"Duration:\s*(\d+):(\d+):(\d+(?:\.\d+)?)", probe.stderr or "")
+        if m:
+            dur_float = float(m.group(1)) * 3600 + float(m.group(2)) * 60 + float(m.group(3))
+            dur = max(1, min(max_duration, int(round(dur_float))))
+        return True, dur
     except Exception as e:
         print(f"Erro ao extrair audio: {e}")
-        return False
+        return False, 0
 
 # Baixa video curto de redes sociais (TikTok, Reels, Shorts, etc.)
 def download_social_video(url: str, output_mp4_path: str) -> bool:

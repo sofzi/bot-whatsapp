@@ -102,11 +102,13 @@ if not os.path.exists(_local_ffprobe):
         pass
 os.environ["PATH"] = os.path.abspath("bin") + os.pathsep + os.environ.get("PATH", "")
 
-from neonize.client import NewClient
+from neonize.client import NewClient, get_sidecar_from_upload
 from neonize.events import ConnectedEv, MessageEv
 from neonize.utils import extract_text
+from neonize.utils.enum import MediaType
 from neonize.utils.jid import build_jid, JIDToNonAD
 from neonize.utils.ffmpeg import FFmpeg, FFProbeInfo, Format, Stream
+import neonize.proto.waE2E.WAWebProtobufsE2E_pb2 as wa_pb
 import database as db
 import media_processor as mp
 
@@ -225,8 +227,59 @@ def desempacotar_mensagem(msg):
         if has_field(msg, "editedMessage") and has_field(msg.editedMessage, "message"):
             msg = msg.editedMessage.message
             continue
+        if has_field(msg, "audioStickerMessage") and has_field(msg.audioStickerMessage, "message"):
+            msg = msg.audioStickerMessage.message
+            continue
         break
     return msg
+
+# Monta e envia uma figurinha com audio nativa do WhatsApp (campo 134 FutureProofMessage + campo 26 audioMessage)
+def enviar_figurinha_sonora_nativa(c: NewClient, chat_dest, webp_path: str, audio_path: str, duration_sec: int, quoted=None):
+    # 1. Monta a StickerMessage com EXIF e upload do WebP
+    sticker_wrapper = c.build_sticker_message(
+        webp_path,
+        quoted=quoted,
+        name="audiosticker",
+        packname="bot",
+        passthrough=True,
+    )
+    sticker_wrapper.stickerMessage.isAnimated = True
+    sticker_wrapper.stickerMessage.width = 512
+    sticker_wrapper.stickerMessage.height = 512
+
+    # 2. Faz upload do audio Ogg/Opus e gera o streamingSidecar obrigatorio
+    with open(audio_path, "rb") as f:
+        audio_bytes = f.read()
+
+    audio_upload = c.upload(audio_bytes, MediaType.MediaAudio)
+    sidecar = (
+        audio_upload.StreamingSidecar
+        if audio_upload.StreamingSidecar
+        else get_sidecar_from_upload(audio_bytes, audio_upload.MediaKey, media_type="audio")
+    )
+
+    audio_proto = wa_pb.AudioMessage(
+        URL=audio_upload.url,
+        directPath=audio_upload.DirectPath,
+        fileEncSHA256=audio_upload.FileEncSHA256,
+        fileLength=audio_upload.FileLength,
+        fileSHA256=audio_upload.FileSHA256,
+        mediaKey=audio_upload.MediaKey,
+        mimetype="audio/ogg; codecs=opus",
+        seconds=max(1, int(duration_sec)),
+        PTT=False,
+        streamingSidecar=sidecar,
+    )
+
+    # 3. Embute o AudioMessage no campo 26 de StickerMessage
+    sticker_wrapper.stickerMessage.audioMessage.CopyFrom(audio_proto)
+
+    # 4. Embrulha em FutureProofMessage no campo 134 (audioStickerMessage)
+    native_msg = wa_pb.Message(
+        audioStickerMessage=wa_pb.FutureProofMessage(message=sticker_wrapper)
+    )
+
+    c.send_message(chat_dest, native_msg)
 
 # Verifica se a mensagem original e de visualizacao unica
 def is_view_once(orig_msg, unwrapped_msg) -> bool:
@@ -715,12 +768,13 @@ def on_message(c: NewClient, message: MessageEv):
                 return
 
             sticker_ok = mp.convert_video_to_sticker(input_video, output_webp, max_duration=5)
-            audio_ok = mp.extract_audio(input_video, output_audio, max_duration=5)
+            audio_ok, audio_dur = mp.extract_audio(input_video, output_audio, max_duration=5)
 
             if sticker_ok:
-                c.send_sticker(chat_clean, output_webp, name="audiosticker", packname="bot", passthrough=True)
                 if audio_ok:
-                    c.send_audio(chat_clean, output_audio, ptt=True)
+                    enviar_figurinha_sonora_nativa(c, chat_clean, output_webp, output_audio, audio_dur, quoted=message)
+                else:
+                    c.send_sticker(chat_clean, output_webp, name="audiosticker", packname="bot", passthrough=True)
                 descontar_credito_usuario()
             else:
                 c.reply_message("Nao foi possivel converter o video.", message, to=chat_clean)
