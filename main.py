@@ -1,5 +1,6 @@
 import os
 import time
+import threading
 from datetime import datetime
 from neonize.client import NewClient
 from neonize.events import ConnectedEv, MessageEv
@@ -18,6 +19,17 @@ message_cache = {}
 client = NewClient("session.db")
 owner_jid = None
 
+# Thread para comandos no terminal
+def escutar_terminal():
+    while True:
+        try:
+            linha = input().strip().lower()
+            if linha in ["sair", "exit", "stop", "encerrar"]:
+                print("Encerrando bot pelo terminal...")
+                os._exit(0)
+        except (EOFError, KeyboardInterrupt):
+            break
+
 # Evento de conexao
 @client.event(ConnectedEv)
 def on_connected(c: NewClient, _: ConnectedEv):
@@ -26,6 +38,7 @@ def on_connected(c: NewClient, _: ConnectedEv):
         me = c.get_me()
         owner_jid = me.JID
         print(f"Conectado como: {me.PushName} ({owner_jid.User})")
+        print("Digite 'sair' no terminal ou envie .encerrar no WhatsApp para desligar.")
     except Exception as e:
         print(f"Conectado. Erro ao ler dados: {e}")
 
@@ -113,6 +126,12 @@ def on_message(c: NewClient, message: MessageEv):
 
     # Comandos do administrador
     if is_from_me:
+        # Comando para encerrar o bot remotamente
+        if texto_mensagem in [".encerrar", ".desligar", ".stop"]:
+            c.reply_message("Encerrando bot...", message)
+            time.sleep(1)
+            os._exit(0)
+
         # Comando .authorize
         if texto_mensagem.startswith(".authorize"):
             partes = texto_mensagem.split()
@@ -211,4 +230,6 @@ def on_message(c: NewClient, message: MessageEv):
 
 if __name__ == "__main__":
     print("Iniciando bot. Escaneie o QR Code se for a primeira vez.")
+    # Inicia a escuta de comandos no terminal
+    threading.Thread(target=escutar_terminal, daemon=True).start()
     client.connect()
