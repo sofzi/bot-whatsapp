@@ -16,9 +16,12 @@ def convert_video_to_sticker(input_path: str, output_webp_path: str, max_duratio
             "-t", str(max_duration),
             "-i", input_path,
             "-vf", "fps=15,scale=512:512:force_original_aspect_ratio=decrease,pad=512:512:(ow-iw)/2:(oh-ih)/2:color=0x00000000",
+            "-c:v", "libwebp_anim",
             "-loop", "0",
+            "-preset", "picture",
+            "-q:v", "50",
+            "-compression_level", "4",
             "-an",
-            "-vsync", "0",
             output_webp_path
         ]
         result = subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE)

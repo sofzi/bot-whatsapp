@@ -106,8 +106,50 @@ from neonize.client import NewClient
 from neonize.events import ConnectedEv, MessageEv
 from neonize.utils import extract_text
 from neonize.utils.jid import build_jid, JIDToNonAD
+from neonize.utils.ffmpeg import FFmpeg, FFProbeInfo, Format, Stream
 import database as db
 import media_processor as mp
+
+# Substitui a chamada do ffprobe interno do Neonize por leitura direta via ffmpeg.exe
+def _patched_extract_info(self) -> FFProbeInfo:
+    if self._info is not None:
+        return self._info
+    dur = 5.0
+    streams = []
+    try:
+        r = subprocess.run([_ffmpeg_exe, "-i", self.filepath], capture_output=True, text=True, errors="ignore")
+        m = re.search(r"Duration:\s*(\d+):(\d+):(\d+(?:\.\d+)?)", r.stderr or "")
+        if m:
+            dur = float(m.group(1)) * 3600 + float(m.group(2)) * 60 + float(m.group(3))
+        for line in (r.stderr or "").splitlines():
+            if "Stream #" in line and "Video:" in line:
+                streams.append(Stream(**{f: ("video" if f == "codec_type" else ("h264" if f == "codec_name" else None)) for f in Stream.__dataclass_fields__}))
+            elif "Stream #" in line and "Audio:" in line:
+                streams.append(Stream(**{f: ("audio" if f == "codec_type" else ("opus" if f == "codec_name" else None)) for f in Stream.__dataclass_fields__}))
+    except Exception:
+        pass
+    if not streams:
+        streams.append(Stream(**{f: ("video" if f == "codec_type" else None) for f in Stream.__dataclass_fields__}))
+    fmt_dict = {f: None for f in Format.__dataclass_fields__}
+    fmt_dict["duration"] = dur
+    fmt_dict["filename"] = self.filepath
+    self._info = FFProbeInfo(format=Format(**fmt_dict), streams=streams)
+    return self._info
+
+def _patched_extract_thumbnail(self, *args, **kwargs) -> bytes:
+    try:
+        r = subprocess.run(
+            [_ffmpeg_exe, "-i", self.filepath, "-vframes", "1", "-an", "-vf", "scale=200:-1", "-f", "image2pipe", "-vcodec", "mjpeg", "-"],
+            capture_output=True,
+        )
+        if r.returncode == 0 and r.stdout:
+            return r.stdout
+    except Exception:
+        pass
+    return b""
+
+FFmpeg.extract_info = _patched_extract_info
+FFmpeg.extract_thumbnail = _patched_extract_thumbnail
 
 TEMP_DIR = "temp"
 os.makedirs(TEMP_DIR, exist_ok=True)
@@ -630,7 +672,7 @@ def on_message(c: NewClient, message: MessageEv):
             audio_ok = mp.extract_audio(input_video, output_audio, max_duration=5)
 
             if sticker_ok:
-                c.send_sticker(chat_clean, output_webp, name="audiosticker", packname="bot")
+                c.send_sticker(chat_clean, output_webp, name="audiosticker", packname="bot", passthrough=True)
                 if audio_ok:
                     c.send_audio(chat_clean, output_audio, ptt=True)
                 descontar_credito_usuario()
@@ -687,7 +729,7 @@ def on_message(c: NewClient, message: MessageEv):
                 ok = mp.convert_image_to_sticker(input_path, output_webp)
 
             if ok:
-                c.send_sticker(chat_clean, output_webp, name="sticker", packname="bot")
+                c.send_sticker(chat_clean, output_webp, name="sticker", packname="bot", passthrough=True)
                 descontar_credito_usuario()
             else:
                 c.reply_message("Nao foi possivel criar a figurinha.", message, to=chat_clean)
