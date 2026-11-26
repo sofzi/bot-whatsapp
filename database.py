@@ -54,3 +54,9 @@ def remove_authorization(user_id: str):
         save_db(db)
         return True
     return False
+
+# Lista todos os usuarios autorizados com creditos ativos
+def list_authorized() -> dict:
+    db = load_db()
+    users = db.get("authorized_users", {})
+    return {u: c for u, c in users.items() if c > 0}

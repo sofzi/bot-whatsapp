@@ -1,19 +1,24 @@
 # bot-whatsapp
 
-Bot de WhatsApp em Python para criacao de figurinhas de audio a partir de videos curtos e encaminhamento de mensagens apagadas (anti-delete).
+Bot de WhatsApp em Python para criacao de figurinhas, download de videos e monitoramento de mensagens apagadas, editadas e de visualizacao unica.
 
 ## Funcionalidades
 
-- `.audiosticker`: corta os primeiros 5 segundos do video e envia o sticker com o audio correspondente (funciona no privado e em grupos para usuarios autorizados).
+- `.audiosticker`: corta os primeiros 5 segundos do video (ou de um link de video) e envia o sticker com o audio correspondente (funciona no privado e em grupos para usuarios autorizados).
   - Em grupo (sem permissao): responde "sai dai bixo".
   - No privado (sem permissao): responde "aguarde o adm".
+- `.fig`: cria figurinha normal a partir de foto ou video enviado/respondido.
+- `.toimg`: converte uma figurinha respondida de volta em imagem (PNG) ou video (MP4).
+- `.baixar <link>`: baixa videos curtos do TikTok, Instagram Reels, YouTube Shorts, etc. e envia no chat.
+- `.ver`: quando o dono responde a uma midia de visualizacao unica com `.ver`, o bot baixa e envia a midia aberta no privado do dono (mesmo em grupos onde o monitoramento esteja desligado).
 - `.authorize`: libera o uso para um contato (padrao 2 usos). Apenas o dono pode usar.
 - `.remover`: remove o contato da lista de autorizados.
+- `.lista`: mostra todos os contatos autorizados no momento e seus creditos restantes.
 - `.ping`: responde com o tempo de resposta em milissegundos (ms).
-- `.antidelete`: ativa a leitura de mensagens apagadas e visualizacao unica para grupos (se enviado em um grupo, ativa apenas nele; se enviado no privado, ativa em todos os grupos).
-- `.stopantidelete`: desativa a leitura de mensagens apagadas e visualizacao unica nos grupos.
-- `.encerrar`: desliga o bot remotamente pelo WhatsApp (apenas o dono).
-- Anti-delete e Visualizacao Unica: ativos por padrao apenas nas conversas privadas para nao sobrecarregar (canais/newsletters e status sao sempre ignorados). Quando alguem apaga uma mensagem ou envia midia de visualizacao unica, o bot encaminha no privado do dono o autor, o local e o conteudo.
+- `.antidelete`: ativa o monitoramento de mensagens apagadas, editadas e visualizacao unica para grupos (se enviado em um grupo, ativa apenas nele; se enviado no privado, ativa em todos os grupos).
+- `.stopantidelete`: desativa o monitoramento nos grupos.
+- `.encerrar` / `.desligar`: desliga o bot remotamente pelo WhatsApp (apenas o dono).
+- Monitoramento Automatico (Anti-delete, Anti-edit e Visualizacao Unica): ativo por padrao nas conversas privadas (canais e status sao sempre ignorados). Encaminha no privado do dono qualquer mensagem apagada, texto editado (antes/depois) ou midia de visualizacao unica.
 
 ## Como rodar
 

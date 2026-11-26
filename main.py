@@ -1,4 +1,5 @@
 import os
+import re
 import sys
 import time
 import glob
@@ -69,10 +70,10 @@ import media_processor as mp
 TEMP_DIR = "temp"
 os.makedirs(TEMP_DIR, exist_ok=True)
 
-# Cache de mensagens para anti-delete
+# Cache de mensagens para anti-delete e anti-edit
 message_cache = {}
 
-# Controle do anti-delete e visualizacao unica em grupos (desativado por padrao)
+# Controle do monitoramento em grupos (desativado por padrao)
 antidelete_grupos_global = False
 antidelete_grupos_ativos = set()
 
@@ -92,7 +93,7 @@ def has_field(obj, field_name: str) -> bool:
 def desempacotar_mensagem(msg):
     if not msg:
         return msg
-    for _ in range(5):
+    for _ in range(6):
         if has_field(msg, "deviceSentMessage") and has_field(msg.deviceSentMessage, "message"):
             msg = msg.deviceSentMessage.message
             continue
@@ -110,6 +111,9 @@ def desempacotar_mensagem(msg):
             continue
         if has_field(msg, "documentWithCaptionMessage") and has_field(msg.documentWithCaptionMessage, "message"):
             msg = msg.documentWithCaptionMessage.message
+            continue
+        if has_field(msg, "editedMessage") and has_field(msg.editedMessage, "message"):
+            msg = msg.editedMessage.message
             continue
         break
     return msg
@@ -142,6 +146,19 @@ def is_view_once(orig_msg, unwrapped_msg) -> bool:
         return True
     return False
 
+# Extrai o primeiro link (http/https) de um texto
+def extrair_url(texto: str) -> str | None:
+    match = re.search(r"(https?://[^\s]+)", texto or "")
+    return match.group(1) if match else None
+
+# Retorna a mensagem citada (quotedMessage) desempacotada, se houver
+def obter_mensagem_citada(raw_msg):
+    if has_field(raw_msg, "extendedTextMessage") and has_field(raw_msg.extendedTextMessage, "contextInfo"):
+        ctx = raw_msg.extendedTextMessage.contextInfo
+        if has_field(ctx, "quotedMessage"):
+            return desempacotar_mensagem(ctx.quotedMessage), ctx
+    return None, None
+
 # Thread para leitura de comandos no terminal
 def escutar_terminal():
     while True:
@@ -163,7 +180,7 @@ def on_connected(c: NewClient, _: ConnectedEv):
         owner_jid = build_jid(owner_number, "s.whatsapp.net")
         print("\n========================================")
         print(f"Conectado como: {me.PushName} ({owner_number})")
-        print("Monitoramento (Anti-delete / Visualizacao unica): Ativo no privado | Use .antidelete para grupos")
+        print("Monitoramento (Anti-delete / Anti-edit / View-once): Ativo no privado | Use .antidelete para grupos")
         print("Digite 'sair' no terminal ou .desligar no WhatsApp para fechar.")
         print("========================================\n")
     except Exception as e:
@@ -201,12 +218,15 @@ def on_message(c: NewClient, message: MessageEv):
     # Verifica se o monitoramento deve observar esta conversa
     monitorar_conversa = (not is_group) or antidelete_grupos_global or (chat.User in antidelete_grupos_ativos)
 
-    # 1. Anti-delete: verifica se a mensagem realmente possui um protocolMessage
+    # 1. Anti-delete (type == 0) e Anti-edit (type == 14)
     if has_field(raw_msg, "protocolMessage"):
         if not monitorar_conversa:
             return
 
         protocol_msg = raw_msg.protocolMessage
+        dest = owner_jid if owner_jid else chat_clean
+
+        # Caso 1A: Mensagem apagada (REVOKE = 0)
         if protocol_msg.type == 0 and has_field(protocol_msg, "key") and protocol_msg.key.ID:
             revoked_id = protocol_msg.key.ID
             if revoked_id in message_cache:
@@ -229,7 +249,6 @@ def on_message(c: NewClient, message: MessageEv):
                 if content:
                     alerta += f"Conteudo: {content}"
 
-                dest = owner_jid if owner_jid else chat_clean
                 try:
                     c.send_message(dest, alerta)
 
@@ -245,6 +264,42 @@ def on_message(c: NewClient, message: MessageEv):
                     print(f"[Anti-Delete] Erro ao enviar notificacao: {err}")
             else:
                 print(f"[Anti-Delete] Mensagem apagada (ID {revoked_id}), mas nao estava no cache.")
+            return
+
+        # Caso 1B: Mensagem editada (MESSAGE_EDIT = 14)
+        if protocol_msg.type == 14 and has_field(protocol_msg, "key") and protocol_msg.key.ID:
+            edited_id = protocol_msg.key.ID
+            novo_texto = ""
+            if has_field(protocol_msg, "editedMessage"):
+                novo_texto = (extract_text(desempacotar_mensagem(protocol_msg.editedMessage)) or "").strip()
+
+            if edited_id in message_cache and not is_from_me:
+                orig_info = message_cache[edited_id]
+                texto_antigo = orig_info.get("text", "")
+                author = orig_info["sender_number"]
+                pushname = orig_info.get("pushname", "")
+                where = orig_info["chat_name"]
+
+                if texto_antigo != novo_texto:
+                    autor_label = f"{pushname} (+{author})" if pushname else f"+{author}"
+                    print(f"[Anti-Edit] Mensagem editada por {autor_label} em {where}: '{texto_antigo}' -> '{novo_texto}'")
+
+                    alerta_edit = (
+                        "Mensagem editada detectada:\n"
+                        f"De: {autor_label}\n"
+                        f"Local: {where}\n"
+                        f"Horario: {datetime.now().strftime('%H:%M:%S')}\n"
+                        f"Antes: {texto_antigo}\n"
+                        f"Depois: {novo_texto}"
+                    )
+                    try:
+                        c.send_message(dest, alerta_edit)
+                    except Exception as err:
+                        print(f"[Anti-Edit] Erro ao enviar notificacao: {err}")
+
+                    message_cache[edited_id]["text"] = novo_texto
+            return
+
         return
 
     # Extrai o texto da mensagem
@@ -276,6 +331,60 @@ def on_message(c: NewClient, message: MessageEv):
                 antidelete_grupos_ativos.clear()
                 print("[Anti-Delete] Desativado em todos os grupos.")
                 c.reply_message("Anti-delete desativado em todos os grupos.", message, to=chat_clean)
+            return
+
+        # Comando .ver (resgata visualizacao unica ou midia marcada sob demanda para o privado do dono)
+        if texto_lower == ".ver":
+            quoted_msg, _ = obter_mensagem_citada(raw_msg)
+            if not quoted_msg:
+                c.reply_message("Responda a uma foto, video ou audio de visualizacao unica com .ver", message, to=chat_clean)
+                return
+
+            ext = None
+            if has_field(quoted_msg, "imageMessage"):
+                ext = ".jpg"
+            elif has_field(quoted_msg, "videoMessage"):
+                ext = ".mp4"
+            elif has_field(quoted_msg, "audioMessage"):
+                ext = ".ogg"
+
+            if not ext:
+                c.reply_message("A mensagem respondida nao contem foto, video ou audio.", message, to=chat_clean)
+                return
+
+            temp_ver = os.path.join(TEMP_DIR, f"ver_{msg_id}{ext}")
+            dest = owner_jid if owner_jid else chat_clean
+            try:
+                c.download_any(quoted_msg, temp_ver)
+                if os.path.exists(temp_ver):
+                    c.send_message(dest, "Midia resgatada com .ver:")
+                    if ext == ".jpg":
+                        c.send_image(dest, temp_ver)
+                    elif ext == ".mp4":
+                        c.send_video(dest, temp_ver)
+                    elif ext == ".ogg":
+                        c.send_audio(dest, temp_ver)
+            except Exception as e:
+                print(f"Erro no comando .ver: {e}")
+                c.reply_message("Nao foi possivel baixar a midia marcada.", message, to=chat_clean)
+            finally:
+                if os.path.exists(temp_ver):
+                    try:
+                        os.remove(temp_ver)
+                    except Exception:
+                        pass
+            return
+
+        # Comando .lista (lista todos os usuarios autorizados e seus creditos)
+        if texto_lower == ".lista":
+            autorizados = db.list_authorized()
+            if not autorizados:
+                c.reply_message("Nenhum usuario autorizado no momento.", message, to=chat_clean)
+            else:
+                linhas = ["Usuarios autorizados:"]
+                for num, cred in autorizados.items():
+                    linhas.append(f"- +{num}: {cred} credito(s)")
+                c.reply_message("\n".join(linhas), message, to=chat_clean)
             return
 
         # Comando para desligar
@@ -361,34 +470,43 @@ def on_message(c: NewClient, message: MessageEv):
         c.reply_message(f"Pong! {ping_ms}ms", message, to=chat_clean)
         return
 
-    # 4. Comando .audiosticker (funciona no privado e em grupos para usuarios autorizados)
+    # Verifica chaves de autorizacao do usuario para os comandos de midia
+    chaves_usuario = [sender_number, sender.User]
+    if not is_group:
+        chaves_usuario.append(chat.User)
+    autorizado = is_from_me or any(db.is_authorized(k) for k in chaves_usuario)
+
+    def bloquear_nao_autorizado():
+        if is_group:
+            c.reply_message("sai dai bixo", message, to=chat_clean)
+        else:
+            c.reply_message("aguarde o adm", message, to=chat_clean)
+
+    def descontar_credito_usuario():
+        if not is_from_me:
+            for k in chaves_usuario:
+                if db.is_authorized(k):
+                    db.consume_credit(k)
+
+    # 4. Comando .audiosticker (video anexado, video respondido ou link de rede social)
     if ".audiosticker" in texto_lower:
-        chaves_usuario = [sender_number, sender.User]
-        if not is_group:
-            chaves_usuario.append(chat.User)
-
-        autorizado = is_from_me or any(db.is_authorized(k) for k in chaves_usuario)
-
         if not autorizado:
-            if is_group:
-                c.reply_message("sai dai bixo", message, to=chat_clean)
-            else:
-                c.reply_message("aguarde o adm", message, to=chat_clean)
+            bloquear_nao_autorizado()
             return
 
-        # Busca o video na propria mensagem ou na mensagem respondida
+        quoted_msg, _ = obter_mensagem_citada(raw_msg)
         video_target = None
+        url_alvo = extrair_url(texto_mensagem)
+
         if has_field(raw_msg, "videoMessage"):
             video_target = raw_msg
-        elif has_field(raw_msg, "extendedTextMessage") and has_field(raw_msg.extendedTextMessage, "contextInfo"):
-            ctx = raw_msg.extendedTextMessage.contextInfo
-            if has_field(ctx, "quotedMessage"):
-                quoted_unwrapped = desempacotar_mensagem(ctx.quotedMessage)
-                if has_field(quoted_unwrapped, "videoMessage"):
-                    video_target = quoted_unwrapped
+        elif quoted_msg and has_field(quoted_msg, "videoMessage"):
+            video_target = quoted_msg
+        elif not url_alvo and quoted_msg:
+            url_alvo = extrair_url(extract_text(quoted_msg))
 
-        if not video_target:
-            c.reply_message("Envie um video com .audiosticker na legenda ou responda a um video com o comando.", message, to=chat_clean)
+        if not video_target and not url_alvo:
+            c.reply_message("Envie um video, responda a um video ou cole um link junto com .audiosticker", message, to=chat_clean)
             return
 
         input_video = os.path.join(TEMP_DIR, f"input_{msg_id}.mp4")
@@ -396,7 +514,15 @@ def on_message(c: NewClient, message: MessageEv):
         output_audio = os.path.join(TEMP_DIR, f"audio_{msg_id}.ogg")
 
         try:
-            c.download_any(video_target, input_video)
+            if video_target:
+                c.download_any(video_target, input_video)
+            else:
+                mp.download_social_video(url_alvo, input_video)
+
+            if not os.path.exists(input_video):
+                c.reply_message("Nao foi possivel obter o video.", message, to=chat_clean)
+                return
+
             sticker_ok = mp.convert_video_to_sticker(input_video, output_webp, max_duration=5)
             audio_ok = mp.extract_audio(input_video, output_audio, max_duration=5)
 
@@ -404,11 +530,7 @@ def on_message(c: NewClient, message: MessageEv):
                 c.send_sticker(chat_clean, output_webp, name="audiosticker", packname="bot")
                 if audio_ok:
                     c.send_audio(chat_clean, output_audio, ptt=True)
-
-                if not is_from_me:
-                    for k in chaves_usuario:
-                        if db.is_authorized(k):
-                            db.consume_credit(k)
+                descontar_credito_usuario()
             else:
                 c.reply_message("Nao foi possivel converter o video.", message, to=chat_clean)
 
@@ -424,7 +546,134 @@ def on_message(c: NewClient, message: MessageEv):
                         pass
         return
 
-    # 5. Cache do Anti-Delete e Visualizacao Unica: ignora grupos se o monitoramento nao estiver ativo
+    # 5. Comando .fig (figurinha estatica ou animada sem audio separado)
+    if texto_lower == ".fig" or texto_lower.startswith(".fig "):
+        if not autorizado:
+            bloquear_nao_autorizado()
+            return
+
+        quoted_msg, _ = obter_mensagem_citada(raw_msg)
+        media_target = None
+        is_video = False
+
+        if has_field(raw_msg, "imageMessage"):
+            media_target = raw_msg
+        elif has_field(raw_msg, "videoMessage"):
+            media_target = raw_msg
+            is_video = True
+        elif quoted_msg:
+            if has_field(quoted_msg, "imageMessage"):
+                media_target = quoted_msg
+            elif has_field(quoted_msg, "videoMessage"):
+                media_target = quoted_msg
+                is_video = True
+
+        if not media_target:
+            c.reply_message("Envie uma foto/video com .fig na legenda ou responda a uma foto/video com .fig", message, to=chat_clean)
+            return
+
+        ext_in = ".mp4" if is_video else ".jpg"
+        input_path = os.path.join(TEMP_DIR, f"fig_in_{msg_id}{ext_in}")
+        output_webp = os.path.join(TEMP_DIR, f"fig_out_{msg_id}.webp")
+
+        try:
+            c.download_any(media_target, input_path)
+            if is_video:
+                ok = mp.convert_video_to_sticker(input_path, output_webp, max_duration=5)
+            else:
+                ok = mp.convert_image_to_sticker(input_path, output_webp)
+
+            if ok:
+                c.send_sticker(chat_clean, output_webp, name="sticker", packname="bot")
+                descontar_credito_usuario()
+            else:
+                c.reply_message("Nao foi possivel criar a figurinha.", message, to=chat_clean)
+        except Exception as e:
+            print(f"Erro no comando .fig: {e}")
+            c.reply_message("Erro ao criar a figurinha.", message, to=chat_clean)
+        finally:
+            for f in [input_path, output_webp]:
+                if os.path.exists(f):
+                    try:
+                        os.remove(f)
+                    except Exception:
+                        pass
+        return
+
+    # 6. Comando .toimg (converte figurinha respondida em imagem ou video)
+    if texto_lower == ".toimg":
+        if not autorizado:
+            bloquear_nao_autorizado()
+            return
+
+        quoted_msg, _ = obter_mensagem_citada(raw_msg)
+        if not quoted_msg or not has_field(quoted_msg, "stickerMessage"):
+            c.reply_message("Responda a uma figurinha com .toimg para converter em imagem ou video.", message, to=chat_clean)
+            return
+
+        in_webp = os.path.join(TEMP_DIR, f"toimg_in_{msg_id}.webp")
+        out_png = os.path.join(TEMP_DIR, f"toimg_out_{msg_id}.png")
+        out_mp4 = os.path.join(TEMP_DIR, f"toimg_out_{msg_id}.mp4")
+
+        try:
+            c.download_any(quoted_msg, in_webp)
+            ok, kind = mp.convert_sticker_to_media(in_webp, out_png, out_mp4)
+            if ok and kind == "image":
+                c.send_image(chat_clean, out_png)
+                descontar_credito_usuario()
+            elif ok and kind == "video":
+                c.send_video(chat_clean, out_mp4)
+                descontar_credito_usuario()
+            else:
+                c.reply_message("Nao foi possivel converter a figurinha.", message, to=chat_clean)
+        except Exception as e:
+            print(f"Erro no comando .toimg: {e}")
+            c.reply_message("Erro ao converter a figurinha.", message, to=chat_clean)
+        finally:
+            for f in [in_webp, out_png, out_mp4]:
+                if os.path.exists(f):
+                    try:
+                        os.remove(f)
+                    except Exception:
+                        pass
+        return
+
+    # 7. Comando .baixar <link> (baixa video de TikTok, Reels, Shorts, etc.)
+    if texto_lower.startswith(".baixar"):
+        if not autorizado:
+            bloquear_nao_autorizado()
+            return
+
+        url_alvo = extrair_url(texto_mensagem)
+        if not url_alvo:
+            quoted_msg, _ = obter_mensagem_citada(raw_msg)
+            if quoted_msg:
+                url_alvo = extrair_url(extract_text(quoted_msg))
+
+        if not url_alvo:
+            c.reply_message("Uso: .baixar <link> (ou responda a uma mensagem que tenha um link com .baixar)", message, to=chat_clean)
+            return
+
+        out_video = os.path.join(TEMP_DIR, f"dl_{msg_id}.mp4")
+        try:
+            ok = mp.download_social_video(url_alvo, out_video)
+            if ok and os.path.exists(out_video):
+                c.send_video(chat_clean, out_video)
+                descontar_credito_usuario()
+            else:
+                c.reply_message("Nao foi possivel baixar o video desse link.", message, to=chat_clean)
+        except Exception as e:
+            print(f"Erro no comando .baixar: {e}")
+            c.reply_message("Erro ao baixar o video.", message, to=chat_clean)
+        finally:
+            if os.path.exists(out_video):
+                try:
+                    os.remove(out_video)
+                except Exception:
+                    pass
+        return
+
+    # 8. Cache do Anti-Delete, Anti-Edit e Visualizacao Unica: ignora grupos se o monitoramento nao estiver ativo
     if not monitorar_conversa:
         return
 
