@@ -2,6 +2,7 @@ session.db
 session.db-shm
 session.db-wal
 temp/
+bin/
 __pycache__/
 *.pyc
 .env

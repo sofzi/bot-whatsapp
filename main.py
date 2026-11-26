@@ -1,7 +1,22 @@
 import os
+import sys
 import time
+import shutil
 import threading
 from datetime import datetime
+import imageio_ffmpeg
+
+# Configura o FFmpeg no PATH local
+os.makedirs("bin", exist_ok=True)
+_ffmpeg_exe = imageio_ffmpeg.get_ffmpeg_exe()
+_local_ffmpeg = os.path.join("bin", "ffmpeg.exe")
+if not os.path.exists(_local_ffmpeg):
+    try:
+        shutil.copyfile(_ffmpeg_exe, _local_ffmpeg)
+    except Exception:
+        pass
+os.environ["PATH"] = os.path.abspath("bin") + os.pathsep + os.environ.get("PATH", "")
+
 from neonize.client import NewClient
 from neonize.events import ConnectedEv, MessageEv
 from neonize.utils import extract_text
