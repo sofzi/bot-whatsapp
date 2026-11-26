@@ -6,6 +6,34 @@ import threading
 from datetime import datetime
 import imageio_ffmpeg
 
+# Configura logger duplo para terminal e arquivo bot.log
+class Logger(object):
+    def __init__(self):
+        self.terminal = sys.stdout
+        self.log = open("bot.log", "a", encoding="utf-8")
+
+    def write(self, message):
+        try:
+            self.terminal.write(message)
+            self.terminal.flush()
+        except Exception:
+            pass
+        try:
+            self.log.write(message)
+            self.log.flush()
+        except Exception:
+            pass
+
+    def flush(self):
+        try:
+            self.terminal.flush()
+            self.log.flush()
+        except Exception:
+            pass
+
+sys.stdout = Logger()
+sys.stderr = Logger()
+
 # Configura o FFmpeg no PATH local
 os.makedirs("bin", exist_ok=True)
 _ffmpeg_exe = imageio_ffmpeg.get_ffmpeg_exe()
@@ -20,6 +48,7 @@ os.environ["PATH"] = os.path.abspath("bin") + os.pathsep + os.environ.get("PATH"
 from neonize.client import NewClient
 from neonize.events import ConnectedEv, MessageEv
 from neonize.utils import extract_text
+from neonize.utils.jid import build_jid, JIDToNonAD
 import database as db
 import media_processor as mp
 
@@ -33,6 +62,7 @@ message_cache = {}
 # Inicializa o cliente do WhatsApp
 client = NewClient("session.db")
 owner_jid = None
+owner_number = None
 
 # Thread para comandos no terminal
 def escutar_terminal():
@@ -48,11 +78,13 @@ def escutar_terminal():
 # Evento de conexao
 @client.event(ConnectedEv)
 def on_connected(c: NewClient, _: ConnectedEv):
-    global owner_jid
+    global owner_jid, owner_number
     try:
         me = c.get_me()
-        owner_jid = me.JID
-        print(f"Conectado como: {me.PushName} ({owner_jid.User})")
+        owner_number = me.JID.User
+        # Cria JID do dono sem identificador de dispositivo (:25)
+        owner_jid = build_jid(owner_number, "s.whatsapp.net")
+        print(f"Conectado como: {me.PushName} ({owner_number})")
         print("Digite 'sair' no terminal ou envie .encerrar no WhatsApp para desligar.")
     except Exception as e:
         print(f"Conectado. Erro ao ler dados: {e}")
@@ -60,15 +92,17 @@ def on_connected(c: NewClient, _: ConnectedEv):
 # Evento de mensagens recebidas
 @client.event(MessageEv)
 def on_message(c: NewClient, message: MessageEv):
-    global owner_jid
+    global owner_jid, owner_number
 
     msg_info = message.Info
     msg_id = msg_info.ID
     chat = msg_info.MessageSource.Chat
     sender = msg_info.MessageSource.Sender
     is_group = msg_info.MessageSource.IsGroup
-    is_from_me = msg_info.MessageSource.IsFromMe
     sender_number = sender.User
+
+    # Verifica se a mensagem veio do dono
+    is_from_me = msg_info.MessageSource.IsFromMe or (owner_number and sender_number == owner_number)
 
     raw_msg = message.Message
 
@@ -91,12 +125,12 @@ def on_message(c: NewClient, message: MessageEv):
             if content:
                 alerta += f"Conteudo: {content}"
 
-            dest = owner_jid if owner_jid else chat
-            c.send_message(dest, alerta)
+            dest = owner_jid if owner_jid else JIDToNonAD(chat)
+            try:
+                c.send_message(dest, alerta)
 
-            # Reenvia arquivo apagado se houver
-            if media_path and os.path.exists(media_path):
-                try:
+                # Reenvia arquivo apagado se houver
+                if media_path and os.path.exists(media_path):
                     c.send_message(dest, f"Midia apagada de +{author}:")
                     if media_path.endswith((".jpg", ".png")):
                         c.send_image(dest, media_path)
@@ -104,8 +138,8 @@ def on_message(c: NewClient, message: MessageEv):
                         c.send_video(dest, media_path)
                     elif media_path.endswith((".ogg", ".mp3")):
                         c.send_audio(dest, media_path)
-                except Exception as err:
-                    print(f"Erro ao reenviar midia apagada: {err}")
+            except Exception as err:
+                print(f"Erro ao enviar alerta anti-delete: {err}")
             return
 
     # Guarda mensagem atual no cache
