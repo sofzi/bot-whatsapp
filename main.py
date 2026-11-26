@@ -256,7 +256,21 @@ def on_message(c: NewClient, message: MessageEv):
             except Exception:
                 pass
 
-    # 2. Comandos de Administrador (Dono)
+    # 2. Comando .ping
+    if texto_mensagem.lower() == ".ping":
+        agora_ms = int(time.time() * 1000)
+        msg_ts = msg_info.Timestamp
+        if msg_ts < 100000000000:
+            msg_ts *= 1000
+        ping_ms = agora_ms - msg_ts
+        if ping_ms <= 0 or ping_ms > 10000:
+            t0 = time.perf_counter()
+            c.get_me()
+            ping_ms = max(1, int((time.perf_counter() - t0) * 1000))
+        c.reply_message(f"Pong! {ping_ms}ms", message, to=chat_clean)
+        return
+
+    # 3. Comandos de Administrador (Dono)
     if is_from_me:
         # Comando para desligar
         if texto_mensagem.lower() in [".encerrar", ".desligar", ".stop"]:

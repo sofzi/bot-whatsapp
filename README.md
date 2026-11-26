@@ -9,6 +9,7 @@ Bot de WhatsApp em Python para criacao de figurinhas de audio a partir de videos
   - No privado (sem permissao): responde "aguarde o adm".
 - `.authorize`: libera o uso para um contato (padrao 2 usos). Apenas o dono pode usar.
 - `.remover`: remove o contato da lista de autorizados.
+- `.ping`: responde com o tempo de resposta em milissegundos (ms).
 - `.encerrar`: desliga o bot remotamente pelo WhatsApp (apenas o dono).
 - Anti-delete: quando alguem apaga uma mensagem para todos em grupos ou no privado, o bot encaminha no privado do dono o autor, o local e o conteudo apagado (texto ou midia).
 
