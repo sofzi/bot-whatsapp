@@ -21,10 +21,10 @@ Bot de WhatsApp em Python para criacao de figurinhas com som, download de videos
 - `.limpar` / `.clearcache`: limpa imediatamente todo o cache de mensagens (privado e grupos) e apaga arquivos temporarios da pasta `temp/`.
 - `.bloquear` / `.block [numero]`: bloqueia um usuario no bot para que seja ignorado em silencio total.
 - `.desbloquear` / `.unblock [numero]`: remove o usuario da lista de bloqueados do bot.
-- `.ban` / `.kick [numero]`: remove um participante do grupo (responda a mensagem, mencione ou digite o numero).
-- `.add` / `.adicionar <numero>`: adiciona um numero ao grupo (ex: `.add 5521999999999`).
-- `.promover` / `.promote [numero]`: promove o participante a admin do grupo.
-- `.rebaixar` / `.demote [numero]`: remove o cargo de admin do participante no grupo.
+- `.ban` / `.kick [numero]`: remove um participante do grupo (somente admins do grupo ou o dono).
+- `.add` / `.adicionar <numero>`: adiciona um numero ao grupo (somente admins do grupo ou o dono).
+- `.promover` / `.promote [numero]`: promove o participante a admin do grupo (somente admins do grupo ou o dono).
+- `.rebaixar` / `.demote [numero]`: remove o cargo de admin do participante no grupo (somente admins do grupo ou o dono).
 - `.logs`: envia as ultimas 20 linhas do `bot.log` no privado do dono.
 - `.todos` / `.tagall <mensagem>`: envia uma mensagem em grupo marcando todos os participantes silenciosamente.
 - `.antidelete`: ativa o monitoramento de mensagens apagadas e editadas para grupos (mensagens de grupos sao limpas automaticamente do cache apos 12 horas).

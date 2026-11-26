@@ -322,6 +322,24 @@ def extrair_jid_alvo_grupo(raw_msg, texto_mensagem: str):
             return build_jid(num, "s.whatsapp.net"), num
     return None, None
 
+# Verifica se o remetente e administrador do grupo
+def eh_admin_do_grupo(c: NewClient, chat, sender_number: str, sender_user: str) -> bool:
+    try:
+        g_info = c.get_group_info(chat)
+        alvos = {x for x in [sender_number, sender_user] if x}
+        for p in g_info.Participants:
+            if p.IsAdmin or p.IsSuperAdmin:
+                ids_p = {
+                    getattr(p.JID, "User", ""),
+                    getattr(p.LID, "User", ""),
+                    getattr(p.PhoneNumber, "User", ""),
+                }
+                if alvos & ids_p:
+                    return True
+    except Exception as err:
+        print(f"Erro ao verificar admin do grupo: {err}")
+    return False
+
 # Thread que limpa automaticamente mensagens de grupos com mais de 12 horas
 def limpar_cache_grupos_periodicamente():
     limite_segundos = 12 * 3600
@@ -511,14 +529,6 @@ def on_message(c: NewClient, message: MessageEv):
         ".block",
         ".desbloquear",
         ".unblock",
-        ".ban",
-        ".kick",
-        ".add",
-        ".adicionar",
-        ".promover",
-        ".promote",
-        ".rebaixar",
-        ".demote",
         ".logs",
         ".todos",
         ".tagall",
@@ -730,74 +740,6 @@ def on_message(c: NewClient, message: MessageEv):
                 c.reply_message("Nao foi possivel marcar os membros do grupo.", message, to=chat_clean)
             return
 
-        # Comando .ban / .kick (remove participante do grupo)
-        if texto_lower == ".ban" or texto_lower.startswith(".ban ") or texto_lower == ".kick" or texto_lower.startswith(".kick "):
-            if not is_group:
-                c.reply_message("Este comando so funciona dentro de grupos.", message, to=chat_clean)
-                return
-            alvo_jid, alvo_num = extrair_jid_alvo_grupo(raw_msg, texto_mensagem)
-            if not alvo_jid:
-                c.reply_message("Uso: responda a mensagem da pessoa com .ban ou digite .ban <numero>", message, to=chat_clean)
-                return
-            try:
-                c.update_group_participants(chat, [alvo_jid], ParticipantChange.REMOVE)
-                c.reply_message(f"Usuario +{alvo_num} removido do grupo.", message, to=chat_clean)
-            except Exception as err:
-                print(f"Erro no comando .ban: {err}")
-                c.reply_message("Nao foi possivel remover do grupo. Verifique se voce e admin do grupo.", message, to=chat_clean)
-            return
-
-        # Comando .add / .adicionar (adiciona numero ao grupo)
-        if texto_lower == ".add" or texto_lower.startswith(".add ") or texto_lower == ".adicionar" or texto_lower.startswith(".adicionar "):
-            if not is_group:
-                c.reply_message("Este comando so funciona dentro de grupos.", message, to=chat_clean)
-                return
-            alvo_jid, alvo_num = extrair_jid_alvo_grupo(raw_msg, texto_mensagem)
-            if not alvo_jid:
-                c.reply_message("Uso: .add <numero com DDD> (ex: .add 5521999999999)", message, to=chat_clean)
-                return
-            try:
-                c.update_group_participants(chat, [alvo_jid], ParticipantChange.ADD)
-                c.reply_message(f"Usuario +{alvo_num} adicionado ao grupo.", message, to=chat_clean)
-            except Exception as err:
-                print(f"Erro no comando .add: {err}")
-                c.reply_message("Nao foi possivel adicionar ao grupo. Verifique o numero, privacidade da pessoa ou se voce e admin.", message, to=chat_clean)
-            return
-
-        # Comando .promover / .promote (torna participante admin do grupo)
-        if texto_lower == ".promover" or texto_lower.startswith(".promover ") or texto_lower == ".promote" or texto_lower.startswith(".promote "):
-            if not is_group:
-                c.reply_message("Este comando so funciona dentro de grupos.", message, to=chat_clean)
-                return
-            alvo_jid, alvo_num = extrair_jid_alvo_grupo(raw_msg, texto_mensagem)
-            if not alvo_jid:
-                c.reply_message("Uso: responda a mensagem da pessoa com .promover ou digite .promover <numero>", message, to=chat_clean)
-                return
-            try:
-                c.update_group_participants(chat, [alvo_jid], ParticipantChange.PROMOTE)
-                c.reply_message(f"Usuario +{alvo_num} promovido a admin do grupo.", message, to=chat_clean)
-            except Exception as err:
-                print(f"Erro no comando .promover: {err}")
-                c.reply_message("Nao foi possivel promover. Verifique se voce e admin do grupo.", message, to=chat_clean)
-            return
-
-        # Comando .rebaixar / .demote (remove admin do participante no grupo)
-        if texto_lower == ".rebaixar" or texto_lower.startswith(".rebaixar ") or texto_lower == ".demote" or texto_lower.startswith(".demote "):
-            if not is_group:
-                c.reply_message("Este comando so funciona dentro de grupos.", message, to=chat_clean)
-                return
-            alvo_jid, alvo_num = extrair_jid_alvo_grupo(raw_msg, texto_mensagem)
-            if not alvo_jid:
-                c.reply_message("Uso: responda a mensagem da pessoa com .rebaixar ou digite .rebaixar <numero>", message, to=chat_clean)
-                return
-            try:
-                c.update_group_participants(chat, [alvo_jid], ParticipantChange.DEMOTE)
-                c.reply_message(f"Admin removido de +{alvo_num}.", message, to=chat_clean)
-            except Exception as err:
-                print(f"Erro no comando .rebaixar: {err}")
-                c.reply_message("Nao foi possivel rebaixar. Verifique se voce e admin do grupo.", message, to=chat_clean)
-            return
-
         # Comando .bloquear / .block (ignora usuario em silencio no bot)
         if texto_lower.startswith(".bloquear") or texto_lower.startswith(".block"):
             partes = texto_mensagem.split()
@@ -941,6 +883,71 @@ def on_message(c: NewClient, message: MessageEv):
                 c.reply_message(f"Usuario +{principal} removido.", message, to=chat_clean)
             else:
                 c.reply_message("Uso: responda a mensagem com .remover ou digite: .remover <numero>", message, to=chat_clean)
+            return
+
+    # 2B. Comandos de Administracao de Grupo (somente admins do grupo ou o dono)
+    comandos_grupo_adm = (".ban", ".kick", ".add", ".adicionar", ".promover", ".promote", ".rebaixar", ".demote")
+    if any(texto_lower == cmd or texto_lower.startswith(cmd + " ") for cmd in comandos_grupo_adm):
+        if not is_group:
+            c.reply_message("Este comando so funciona dentro de grupos.", message, to=chat_clean)
+            return
+
+        if not (is_from_me or eh_admin_do_grupo(c, chat, sender_number, sender.User)):
+            c.reply_message("sai dai bixo, so adm do grupo pode usar isso", message, to=chat_clean)
+            return
+
+        alvo_jid, alvo_num = extrair_jid_alvo_grupo(raw_msg, texto_mensagem)
+
+        # .ban / .kick
+        if texto_lower == ".ban" or texto_lower.startswith(".ban ") or texto_lower == ".kick" or texto_lower.startswith(".kick "):
+            if not alvo_jid:
+                c.reply_message("Uso: responda a mensagem da pessoa com .ban ou digite .ban <numero>", message, to=chat_clean)
+                return
+            try:
+                c.update_group_participants(chat, [alvo_jid], ParticipantChange.REMOVE)
+                c.reply_message(f"Usuario +{alvo_num} removido do grupo.", message, to=chat_clean)
+            except Exception as err:
+                print(f"Erro no comando .ban: {err}")
+                c.reply_message("Nao foi possivel remover do grupo. Verifique se o numero do bot e admin do grupo.", message, to=chat_clean)
+            return
+
+        # .add / .adicionar
+        if texto_lower == ".add" or texto_lower.startswith(".add ") or texto_lower == ".adicionar" or texto_lower.startswith(".adicionar "):
+            if not alvo_jid:
+                c.reply_message("Uso: .add <numero com DDD> (ex: .add 5521999999999)", message, to=chat_clean)
+                return
+            try:
+                c.update_group_participants(chat, [alvo_jid], ParticipantChange.ADD)
+                c.reply_message(f"Usuario +{alvo_num} adicionado ao grupo.", message, to=chat_clean)
+            except Exception as err:
+                print(f"Erro no comando .add: {err}")
+                c.reply_message("Nao foi possivel adicionar ao grupo. Verifique o numero, privacidade da pessoa ou se o bot e admin.", message, to=chat_clean)
+            return
+
+        # .promover / .promote
+        if texto_lower == ".promover" or texto_lower.startswith(".promover ") or texto_lower == ".promote" or texto_lower.startswith(".promote "):
+            if not alvo_jid:
+                c.reply_message("Uso: responda a mensagem da pessoa com .promover ou digite .promover <numero>", message, to=chat_clean)
+                return
+            try:
+                c.update_group_participants(chat, [alvo_jid], ParticipantChange.PROMOTE)
+                c.reply_message(f"Usuario +{alvo_num} promovido a admin do grupo.", message, to=chat_clean)
+            except Exception as err:
+                print(f"Erro no comando .promover: {err}")
+                c.reply_message("Nao foi possivel promover. Verifique se o numero do bot e admin do grupo.", message, to=chat_clean)
+            return
+
+        # .rebaixar / .demote
+        if texto_lower == ".rebaixar" or texto_lower.startswith(".rebaixar ") or texto_lower == ".demote" or texto_lower.startswith(".demote "):
+            if not alvo_jid:
+                c.reply_message("Uso: responda a mensagem da pessoa com .rebaixar ou digite .rebaixar <numero>", message, to=chat_clean)
+                return
+            try:
+                c.update_group_participants(chat, [alvo_jid], ParticipantChange.DEMOTE)
+                c.reply_message(f"Admin removido de +{alvo_num}.", message, to=chat_clean)
+            except Exception as err:
+                print(f"Erro no comando .rebaixar: {err}")
+                c.reply_message("Nao foi possivel rebaixar. Verifique se o numero do bot e admin do grupo.", message, to=chat_clean)
             return
 
     # 3. Comando .comandos / .ajuda / .help / .commands
