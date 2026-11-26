@@ -72,7 +72,7 @@ os.makedirs(TEMP_DIR, exist_ok=True)
 # Cache de mensagens para anti-delete
 message_cache = {}
 
-# Controle do anti-delete em grupos (desativado por padrao para nao sobrecarregar)
+# Controle do anti-delete e visualizacao unica em grupos (desativado por padrao)
 antidelete_grupos_global = False
 antidelete_grupos_ativos = set()
 
@@ -105,11 +105,42 @@ def desempacotar_mensagem(msg):
         if has_field(msg, "viewOnceMessageV2") and has_field(msg.viewOnceMessageV2, "message"):
             msg = msg.viewOnceMessageV2.message
             continue
+        if has_field(msg, "viewOnceMessageV2Extension") and has_field(msg.viewOnceMessageV2Extension, "message"):
+            msg = msg.viewOnceMessageV2Extension.message
+            continue
         if has_field(msg, "documentWithCaptionMessage") and has_field(msg.documentWithCaptionMessage, "message"):
             msg = msg.documentWithCaptionMessage.message
             continue
         break
     return msg
+
+# Verifica se a mensagem original e de visualizacao unica
+def is_view_once(orig_msg, unwrapped_msg) -> bool:
+    cur = orig_msg
+    for _ in range(5):
+        if not cur:
+            break
+        if (
+            has_field(cur, "viewOnceMessage")
+            or has_field(cur, "viewOnceMessageV2")
+            or has_field(cur, "viewOnceMessageV2Extension")
+        ):
+            return True
+        if has_field(cur, "deviceSentMessage") and has_field(cur.deviceSentMessage, "message"):
+            cur = cur.deviceSentMessage.message
+            continue
+        if has_field(cur, "ephemeralMessage") and has_field(cur.ephemeralMessage, "message"):
+            cur = cur.ephemeralMessage.message
+            continue
+        break
+
+    if has_field(unwrapped_msg, "imageMessage") and unwrapped_msg.imageMessage.viewOnce:
+        return True
+    if has_field(unwrapped_msg, "videoMessage") and unwrapped_msg.videoMessage.viewOnce:
+        return True
+    if has_field(unwrapped_msg, "audioMessage") and unwrapped_msg.audioMessage.viewOnce:
+        return True
+    return False
 
 # Thread para leitura de comandos no terminal
 def escutar_terminal():
@@ -132,7 +163,7 @@ def on_connected(c: NewClient, _: ConnectedEv):
         owner_jid = build_jid(owner_number, "s.whatsapp.net")
         print("\n========================================")
         print(f"Conectado como: {me.PushName} ({owner_number})")
-        print("Anti-delete: Ativo no privado | Desativado em grupos (use .antidelete para ativar)")
+        print("Monitoramento (Anti-delete / Visualizacao unica): Ativo no privado | Use .antidelete para grupos")
         print("Digite 'sair' no terminal ou .desligar no WhatsApp para fechar.")
         print("========================================\n")
     except Exception as e:
@@ -167,7 +198,7 @@ def on_message(c: NewClient, message: MessageEv):
 
     raw_msg = desempacotar_mensagem(message.Message)
 
-    # Verifica se o anti-delete deve monitorar esta conversa
+    # Verifica se o monitoramento deve observar esta conversa
     monitorar_conversa = (not is_group) or antidelete_grupos_global or (chat.User in antidelete_grupos_ativos)
 
     # 1. Anti-delete: verifica se a mensagem realmente possui um protocolMessage
@@ -261,26 +292,30 @@ def on_message(c: NewClient, message: MessageEv):
         if texto_lower.startswith(".authorize"):
             partes = texto_mensagem.split()
             qtd = 2
-            alvo = None
+            alvos = set()
 
             if has_field(raw_msg, "extendedTextMessage") and has_field(raw_msg.extendedTextMessage, "contextInfo"):
                 ctx = raw_msg.extendedTextMessage.contextInfo
                 if ctx.participant:
-                    alvo = ctx.participant.split("@")[0]
-                    if len(partes) > 1 and partes[1].isdigit():
-                        qtd = int(partes[1])
+                    alvos.add(ctx.participant.split("@")[0].split(":")[0])
+                if ctx.stanzaID and ctx.stanzaID in message_cache:
+                    alvos.add(message_cache[ctx.stanzaID]["sender_number"])
+                if len(partes) > 1 and partes[1].isdigit():
+                    qtd = int(partes[1])
 
-            if not alvo and len(partes) > 1:
-                alvo = partes[1].replace("+", "").replace("@", "").strip()
+            if not alvos and len(partes) > 1:
+                alvos.add(partes[1].replace("+", "").replace("@", "").strip())
                 if len(partes) > 2 and partes[2].isdigit():
                     qtd = int(partes[2])
 
-            if not alvo and not is_group and chat.User != owner_number:
-                alvo = chat.User
+            if not alvos and not is_group and chat.User != owner_number:
+                alvos.add(chat.User)
 
-            if alvo:
-                db.add_authorization(alvo, qtd)
-                c.reply_message(f"Usuario +{alvo} autorizado com {qtd} creditos.", message, to=chat_clean)
+            if alvos:
+                for a in alvos:
+                    db.add_authorization(a, qtd)
+                principal = next(iter(alvos))
+                c.reply_message(f"Usuario +{principal} autorizado com {qtd} creditos.", message, to=chat_clean)
             else:
                 c.reply_message("Uso: responda a mensagem com .authorize ou digite: .authorize <numero>", message, to=chat_clean)
             return
@@ -288,22 +323,26 @@ def on_message(c: NewClient, message: MessageEv):
         # Comando .remover
         if texto_lower.startswith(".remover"):
             partes = texto_mensagem.split()
-            alvo = None
+            alvos = set()
 
             if has_field(raw_msg, "extendedTextMessage") and has_field(raw_msg.extendedTextMessage, "contextInfo"):
                 ctx = raw_msg.extendedTextMessage.contextInfo
                 if ctx.participant:
-                    alvo = ctx.participant.split("@")[0]
+                    alvos.add(ctx.participant.split("@")[0].split(":")[0])
+                if ctx.stanzaID and ctx.stanzaID in message_cache:
+                    alvos.add(message_cache[ctx.stanzaID]["sender_number"])
 
-            if not alvo and len(partes) > 1:
-                alvo = partes[1].replace("+", "").replace("@", "").strip()
+            if not alvos and len(partes) > 1:
+                alvos.add(partes[1].replace("+", "").replace("@", "").strip())
 
-            if not alvo and not is_group and chat.User != owner_number:
-                alvo = chat.User
+            if not alvos and not is_group and chat.User != owner_number:
+                alvos.add(chat.User)
 
-            if alvo:
-                db.remove_authorization(alvo)
-                c.reply_message(f"Usuario +{alvo} removido.", message, to=chat_clean)
+            if alvos:
+                for a in alvos:
+                    db.remove_authorization(a)
+                principal = next(iter(alvos))
+                c.reply_message(f"Usuario +{principal} removido.", message, to=chat_clean)
             else:
                 c.reply_message("Uso: responda a mensagem com .remover ou digite: .remover <numero>", message, to=chat_clean)
             return
@@ -322,16 +361,19 @@ def on_message(c: NewClient, message: MessageEv):
         c.reply_message(f"Pong! {ping_ms}ms", message, to=chat_clean)
         return
 
-    # 4. Comando .audiosticker
+    # 4. Comando .audiosticker (funciona no privado e em grupos para usuarios autorizados)
     if ".audiosticker" in texto_lower:
-        # Bloqueio em grupos
-        if is_group:
-            c.reply_message("sai dai bixo", message, to=chat_clean)
-            return
+        chaves_usuario = [sender_number, sender.User]
+        if not is_group:
+            chaves_usuario.append(chat.User)
 
-        # Bloqueio para nao autorizados no privado
-        if not is_from_me and not (db.is_authorized(sender_number) or db.is_authorized(chat.User)):
-            c.reply_message("aguarde o adm", message, to=chat_clean)
+        autorizado = is_from_me or any(db.is_authorized(k) for k in chaves_usuario)
+
+        if not autorizado:
+            if is_group:
+                c.reply_message("sai dai bixo", message, to=chat_clean)
+            else:
+                c.reply_message("aguarde o adm", message, to=chat_clean)
             return
 
         # Busca o video na propria mensagem ou na mensagem respondida
@@ -364,10 +406,9 @@ def on_message(c: NewClient, message: MessageEv):
                     c.send_audio(chat_clean, output_audio, ptt=True)
 
                 if not is_from_me:
-                    if db.is_authorized(sender_number):
-                        db.consume_credit(sender_number)
-                    elif db.is_authorized(chat.User):
-                        db.consume_credit(chat.User)
+                    for k in chaves_usuario:
+                        if db.is_authorized(k):
+                            db.consume_credit(k)
             else:
                 c.reply_message("Nao foi possivel converter o video.", message, to=chat_clean)
 
@@ -383,7 +424,7 @@ def on_message(c: NewClient, message: MessageEv):
                         pass
         return
 
-    # 5. Cache do Anti-Delete: ignora grupos se o monitoramento nao estiver ativo
+    # 5. Cache do Anti-Delete e Visualizacao Unica: ignora grupos se o monitoramento nao estiver ativo
     if not monitorar_conversa:
         return
 
@@ -418,14 +459,42 @@ def on_message(c: NewClient, message: MessageEv):
     except Exception:
         salved_media = None
 
+    horario_atual = datetime.now().strftime("%H:%M:%S")
+    pushname = msg_info.Pushname or ""
+
+    # Se for midia de visualizacao unica, encaminha imediatamente para o privado do dono
+    if salved_media and os.path.exists(salved_media) and not is_from_me and is_view_once(message.Message, raw_msg):
+        autor_label = f"{pushname} (+{sender_number})" if pushname else f"+{sender_number}"
+        print(f"[Visualizacao Unica] Midia de {autor_label} em {chat_label} capturada!")
+        alerta_vo = (
+            "Midia de visualizacao unica detectada:\n"
+            f"De: {autor_label}\n"
+            f"Local: {chat_label}\n"
+            f"Horario: {horario_atual}\n"
+        )
+        if texto_mensagem:
+            alerta_vo += f"Legenda: {texto_mensagem}"
+
+        dest = owner_jid if owner_jid else chat_clean
+        try:
+            c.send_message(dest, alerta_vo)
+            if salved_media.endswith((".jpg", ".png")):
+                c.send_image(dest, salved_media)
+            elif salved_media.endswith(".mp4"):
+                c.send_video(dest, salved_media)
+            elif salved_media.endswith((".ogg", ".mp3")):
+                c.send_audio(dest, salved_media)
+        except Exception as err:
+            print(f"[Visualizacao Unica] Erro ao encaminhar midia: {err}")
+
     if texto_mensagem or salved_media:
         message_cache[msg_id] = {
             "sender_number": sender_number,
-            "pushname": msg_info.Pushname or "",
+            "pushname": pushname,
             "chat_name": chat_label,
             "text": texto_mensagem,
             "media_path": salved_media,
-            "time": datetime.now().strftime("%H:%M:%S")
+            "time": horario_atual
         }
 
     # Mantem o cache com no maximo 1000 mensagens
