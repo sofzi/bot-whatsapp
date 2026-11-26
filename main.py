@@ -147,8 +147,13 @@ def on_message(c: NewClient, message: MessageEv):
     msg_id = msg_info.ID
     src = msg_info.MessageSource
     chat = src.Chat
-    chat_clean = JIDToNonAD(chat)
     sender = src.Sender
+
+    # Ignora canais (newsletters) e status/transmissoes (broadcast)
+    if chat.Server in ["newsletter", "broadcast"] or sender.Server in ["newsletter", "broadcast"]:
+        return
+
+    chat_clean = JIDToNonAD(chat)
     is_group = src.IsGroup
 
     # Extrai o numero real do remetente (mesmo quando o WhatsApp envia LID)

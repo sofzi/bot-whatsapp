@@ -13,7 +13,7 @@ Bot de WhatsApp em Python para criacao de figurinhas de audio a partir de videos
 - `.antidelete`: ativa a leitura de mensagens apagadas para grupos (se enviado em um grupo, ativa apenas nele; se enviado no privado, ativa em todos os grupos).
 - `.stopantidelete`: desativa a leitura de mensagens apagadas nos grupos.
 - `.encerrar`: desliga o bot remotamente pelo WhatsApp (apenas o dono).
-- Anti-delete: ativo por padrao apenas nas conversas privadas para nao sobrecarregar. Quando alguem apaga uma mensagem, o bot encaminha no privado do dono o autor, o local e o conteudo apagado (texto ou midia).
+- Anti-delete: ativo por padrao apenas nas conversas privadas para nao sobrecarregar (canais/newsletters e status sao sempre ignorados). Quando alguem apaga uma mensagem, o bot encaminha no privado do dono o autor, o local e o conteudo apagado (texto ou midia).
 
 ## Como rodar
 
