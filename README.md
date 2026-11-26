@@ -17,7 +17,8 @@ Bot de WhatsApp em Python para criacao de figurinhas, download de videos e monit
 - `.ping`: responde com o tempo de resposta em milissegundos (ms).
 - `.antidelete`: ativa o monitoramento de mensagens apagadas, editadas e visualizacao unica para grupos (se enviado em um grupo, ativa apenas nele; se enviado no privado, ativa em todos os grupos).
 - `.stopantidelete`: desativa o monitoramento nos grupos.
-- `.encerrar` / `.desligar`: desliga o bot remotamente pelo WhatsApp (apenas o dono).
+- `.restart` / `.reiniciar`: reinicia o bot recarregando o codigo sem perder a sessao atual (apenas o dono).
+- `.desligar` / `.encerrar`: desconecta a sessao do WhatsApp, apaga os arquivos de login e fecha o bot (apenas o dono).
 - Monitoramento Automatico (Anti-delete, Anti-edit e Visualizacao Unica): ativo por padrao nas conversas privadas (canais e status sao sempre ignorados). Encaminha no privado do dono qualquer mensagem apagada, texto editado (antes/depois) ou midia de visualizacao unica.
 
 ## Como rodar
@@ -31,7 +32,7 @@ Bot de WhatsApp em Python para criacao de figurinhas, download de videos e monit
 
 3. Escanear o QR code no terminal pelo WhatsApp (Aparelhos conectados > Conectar um aparelho).
 
-## Como encerrar
+## Como reiniciar ou encerrar
 
-- Pelo terminal: digite `sair` ou `exit` e pressione Enter (ou use Ctrl + C).
-- Pelo WhatsApp: envie `.encerrar` ou `.desligar` no seu chat.
+- **Para reiniciar mantendo a sessao:** envie `.restart` no WhatsApp ou digite `restart` no terminal.
+- **Para desligar e apagar a sessao:** envie `.desligar` (ou `.encerrar`) no WhatsApp ou digite `sair` no terminal.

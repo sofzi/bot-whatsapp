@@ -1,6 +1,8 @@
 session.db
 session.db-shm
 session.db-wal
+.keep_session
+bot.log
 temp/
 bin/
 __pycache__/

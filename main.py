@@ -4,16 +4,58 @@ import sys
 import time
 import glob
 import shutil
+import subprocess
 import threading
 from datetime import datetime
+
+# Codigo de saida especial para indicar reinicializacao mantendo a sessao
+RESTART_EXIT_CODE = 42
+KEEP_SESSION_FLAG = ".keep_session"
+
+# Remove todos os arquivos de sessao do disco
+def limpar_arquivos_sessao():
+    if os.path.exists(KEEP_SESSION_FLAG):
+        try:
+            os.remove(KEEP_SESSION_FLAG)
+        except Exception:
+            pass
+    for f in glob.glob("session.db*"):
+        try:
+            os.remove(f)
+        except Exception:
+            pass
+
+# Se executado diretamente pelo usuario, roda como supervisor para suportar .restart
+if __name__ == "__main__" and "--worker" not in sys.argv:
+    # Ao iniciar do zero, garante que qualquer sessao antiga seja apagada
+    limpar_arquivos_sessao()
+    while True:
+        try:
+            ret = subprocess.call([sys.executable, __file__, "--worker"])
+        except KeyboardInterrupt:
+            limpar_arquivos_sessao()
+            break
+
+        if ret == RESTART_EXIT_CODE:
+            print("\nReiniciando bot e mantendo a sessao atual...\n")
+            time.sleep(1)
+            continue
+
+        # Se encerrou normalmente (.desligar ou sair), apaga a sessao
+        limpar_arquivos_sessao()
+        break
+    sys.exit(0)
+
 import imageio_ffmpeg
 
-# Apaga a sessao anterior para sempre exigir um novo QR Code ao abrir
-for f in glob.glob("session.db*"):
+# No processo worker: apaga a sessao apenas se nao veio de um .restart
+if os.path.exists(KEEP_SESSION_FLAG):
     try:
-        os.remove(f)
+        os.remove(KEEP_SESSION_FLAG)
     except Exception:
         pass
+else:
+    limpar_arquivos_sessao()
 
 # Configura logger duplo para terminal e bot.log
 class Logger(object):
@@ -77,10 +119,36 @@ message_cache = {}
 antidelete_grupos_global = False
 antidelete_grupos_ativos = set()
 
-# Inicializa cliente do WhatsApp com sessao nova
+# Inicializa cliente do WhatsApp
 client = NewClient("session.db")
 owner_jid = None
 owner_number = None
+
+# Encerra o bot apagando a sessao
+def encerrar_perdendo_sessao():
+    try:
+        client.logout()
+    except Exception:
+        pass
+    try:
+        client.disconnect()
+    except Exception:
+        pass
+    limpar_arquivos_sessao()
+    os._exit(0)
+
+# Reinicia o bot preservando a sessao atual
+def reiniciar_mantendo_sessao():
+    try:
+        with open(KEEP_SESSION_FLAG, "w", encoding="utf-8") as f:
+            f.write("1")
+    except Exception:
+        pass
+    try:
+        client.disconnect()
+    except Exception:
+        pass
+    os._exit(RESTART_EXIT_CODE)
 
 # Verifica com seguranca se um sub-campo Protobuf realmente existe na mensagem
 def has_field(obj, field_name: str) -> bool:
@@ -165,8 +233,11 @@ def escutar_terminal():
         try:
             linha = input().strip().lower()
             if linha in ["sair", "exit", "stop", "encerrar", "desligar"]:
-                print("Encerrando bot pelo terminal...")
-                os._exit(0)
+                print("Encerrando bot e limpando sessao...")
+                encerrar_perdendo_sessao()
+            if linha in ["restart", "reiniciar", ".restart"]:
+                print("Reiniciando bot pelo terminal (mantendo sessao)...")
+                reiniciar_mantendo_sessao()
         except (EOFError, KeyboardInterrupt):
             break
 
@@ -181,7 +252,8 @@ def on_connected(c: NewClient, _: ConnectedEv):
         print("\n========================================")
         print(f"Conectado como: {me.PushName} ({owner_number})")
         print("Monitoramento (Anti-delete / Anti-edit / View-once): Ativo no privado | Use .antidelete para grupos")
-        print("Digite 'sair' no terminal ou .desligar no WhatsApp para fechar.")
+        print("Terminal: digite 'restart' para reiniciar ou 'sair' para desligar e apagar sessao.")
+        print("WhatsApp: envie .restart para reiniciar ou .desligar para fechar e apagar sessao.")
         print("========================================\n")
     except Exception as e:
         print(f"Conectado. Erro ao ler dados: {e}")
@@ -209,9 +281,10 @@ def on_message(c: NewClient, message: MessageEv):
     if sender.Server == "lid" and has_field(src, "SenderAlt") and src.SenderAlt.User:
         sender_number = src.SenderAlt.User
 
-    # Verifica se quem enviou foi o dono
-    is_device_sent = has_field(message.Message, "deviceSentMessage")
-    is_from_me = src.IsFromMe or is_device_sent or (owner_number and sender_number == owner_number)
+    # Verificacao estrita de dono: apenas mensagens autenticadas como IsFromMe pelo protocolo ou do proprio JID do dono
+    is_from_me = bool(src.IsFromMe) or bool(
+        owner_number and sender_number == owner_number and sender.Server == "s.whatsapp.net"
+    )
 
     raw_msg = desempacotar_mensagem(message.Message)
 
@@ -306,7 +379,27 @@ def on_message(c: NewClient, message: MessageEv):
     texto_mensagem = (extract_text(raw_msg) or "").strip()
     texto_lower = texto_mensagem.lower()
 
-    # 2. Comandos de Administrador (Dono)
+    # Lista de comandos exclusivos do dono
+    comandos_adm = (
+        ".antidelete",
+        ".stopantidelete",
+        ".ver",
+        ".lista",
+        ".encerrar",
+        ".desligar",
+        ".stop",
+        ".restart",
+        ".reiniciar",
+        ".authorize",
+        ".remover",
+    )
+
+    # Se outra pessoa tentar usar qualquer comando de admin, bloqueia e ignora
+    if not is_from_me and any(texto_lower == cmd or texto_lower.startswith(cmd + " ") for cmd in comandos_adm):
+        print(f"[Seguranca] Tentativa bloqueada de comando admin por +{sender_number}: {texto_mensagem}")
+        return
+
+    # 2. Comandos de Administrador (Exclusivos do Dono)
     if is_from_me:
         # Comando .antidelete (ativa leitura de grupos)
         if texto_lower == ".antidelete":
@@ -387,15 +480,25 @@ def on_message(c: NewClient, message: MessageEv):
                 c.reply_message("\n".join(linhas), message, to=chat_clean)
             return
 
-        # Comando para desligar
-        if texto_lower in [".encerrar", ".desligar", ".stop"]:
-            print("Comando de encerramento recebido pelo WhatsApp. Desligando...")
+        # Comando .restart (reinicia o bot mantendo a sessao atual)
+        if texto_lower in [".restart", ".reiniciar"]:
+            print("Comando .restart recebido pelo WhatsApp. Reiniciando sem perder a sessao...")
             try:
-                c.reply_message("Encerrando bot...", message, to=chat_clean)
+                c.reply_message("Reiniciando bot (mantendo sessao)...", message, to=chat_clean)
             except Exception:
                 pass
             time.sleep(1)
-            os._exit(0)
+            reiniciar_mantendo_sessao()
+
+        # Comando .desligar (encerra o bot e apaga a sessao)
+        if texto_lower in [".encerrar", ".desligar", ".stop"]:
+            print("Comando .desligar recebido pelo WhatsApp. Apagando sessao e desligando...")
+            try:
+                c.reply_message("Desligando bot e encerrando sessao...", message, to=chat_clean)
+            except Exception:
+                pass
+            time.sleep(1)
+            encerrar_perdendo_sessao()
 
         # Comando .authorize
         if texto_lower.startswith(".authorize"):
@@ -757,6 +860,6 @@ def on_message(c: NewClient, message: MessageEv):
                 pass
 
 if __name__ == "__main__":
-    print("Iniciando bot. Escaneie o QR Code que aparecera no terminal.")
+    print("Iniciando bot. Escaneie o QR Code caso solicitado.")
     threading.Thread(target=escutar_terminal, daemon=True).start()
     client.connect()
