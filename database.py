@@ -180,3 +180,8 @@ def remove_macaco(user_id: str) -> bool:
         save_db(db)
         return True
     return False
+
+# Lista usuarios silenciados pelo comando secreto macaco
+def list_macaco() -> list:
+    db = load_db()
+    return db.get("macaco_users", [])

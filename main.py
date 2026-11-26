@@ -1009,7 +1009,19 @@ def on_message(c: NewClient, message: MessageEv):
                 c.reply_message("Uso: responda a mensagem com .remover ou digite: .remover <numero>", message, to=chat_clean)
             return
 
-    # Comando secreto: macaco / .macaco (marcando usuario) e .desmacaco / .unmacaco (silencioso para nao-admins)
+    # Comando secreto: macaco / .macaco (marcando usuario), .desmacaco / .unmacaco e .macacos / .listamacaco (silencioso para nao-admins)
+    if texto_lower in [".macacos", ".listamacaco"]:
+        chaves_sudo_macaco = [sender_number, sender.User]
+        tem_perm = is_from_me or (is_group and (eh_admin_do_grupo(c, chat, sender_number, sender.User) or db.is_sudo(chaves_sudo_macaco)))
+        if tem_perm:
+            lista = db.list_macaco()
+            if not lista:
+                c.reply_message("Nenhum usuario no modo macaco no momento.", message, to=chat_clean)
+            else:
+                linhas = ["Usuarios no modo macaco:"] + [f"- +{u}" for u in lista]
+                c.reply_message("\n".join(linhas), message, to=chat_clean)
+            return
+
     has_ctx_macaco = has_field(raw_msg, "extendedTextMessage") and has_field(raw_msg.extendedTextMessage, "contextInfo")
     ctx_macaco = raw_msg.extendedTextMessage.contextInfo if has_ctx_macaco else None
     tem_marcacao_macaco = bool(ctx_macaco and (ctx_macaco.participant or ctx_macaco.mentionedJID or ctx_macaco.stanzaID))
