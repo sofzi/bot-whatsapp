@@ -18,6 +18,7 @@ Bot de WhatsApp em Python para criacao de figurinhas com som, download de videos
 - `.authorize` / `.autorizar [numero] [qtd]`: libera o uso para um contato (padrao 2 creditos).
 - `.remover` / `.remove` / `.unauthorize [numero]`: remove o contato da lista de autorizados.
 - `.lista` / `.list`: mostra todos os contatos autorizados no momento e seus creditos restantes.
+- `.status` / `.info`: mostra o tempo ligado, mensagens no cache, status do anti-delete em grupos e total de usuarios autorizados.
 - `.antidelete`: ativa o monitoramento de mensagens apagadas e editadas para grupos (se enviado em um grupo, ativa apenas nele; se enviado no privado, ativa em todos os grupos).
 - `.stopantidelete`: desativa o monitoramento nos grupos.
 - `.ver` / `.view` / `.save`: resgata uma midia marcada para o privado do dono.

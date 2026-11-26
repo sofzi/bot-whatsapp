@@ -167,6 +167,18 @@ antidelete_grupos_ativos = set()
 client = NewClient("session.db")
 owner_jid = None
 owner_number = None
+bot_start_time = time.time()
+
+# Formata tempo ligado em horas, minutos e segundos
+def formatar_uptime(segundos: float) -> str:
+    total = int(segundos)
+    h, resto = divmod(total, 3600)
+    m, s = divmod(resto, 60)
+    if h > 0:
+        return f"{h}h {m}m {s}s"
+    if m > 0:
+        return f"{m}m {s}s"
+    return f"{s}s"
 
 # Encerra o bot apagando a sessao
 def encerrar_perdendo_sessao():
@@ -446,6 +458,8 @@ def on_message(c: NewClient, message: MessageEv):
         ".save",
         ".lista",
         ".list",
+        ".status",
+        ".info",
         ".encerrar",
         ".desligar",
         ".stop",
@@ -557,6 +571,28 @@ def on_message(c: NewClient, message: MessageEv):
                         pass
             return
 
+        # Comando .status / .info (painel rapido do bot)
+        if texto_lower in [".status", ".info"]:
+            uptime = formatar_uptime(time.time() - bot_start_time)
+            qtd_cache = len(message_cache)
+            qtd_autorizados = len(db.list_authorized())
+            if antidelete_grupos_global:
+                status_grupos = "Ativo (todos os grupos)"
+            elif antidelete_grupos_ativos:
+                status_grupos = f"Ativo ({len(antidelete_grupos_ativos)} grupo(s))"
+            else:
+                status_grupos = "Desativado"
+
+            resumo = (
+                "Status do bot:\n"
+                f"- Tempo ligado: {uptime}\n"
+                f"- Mensagens no cache: {qtd_cache}/1000\n"
+                f"- Anti-delete em grupos: {status_grupos}\n"
+                f"- Usuarios autorizados: {qtd_autorizados}"
+            )
+            c.reply_message(resumo, message, to=chat_clean)
+            return
+
         # Comando .lista / .list (lista todos os usuarios autorizados e seus creditos)
         if texto_lower in [".lista", ".list"]:
             autorizados = db.list_authorized()
@@ -666,6 +702,7 @@ def on_message(c: NewClient, message: MessageEv):
                 "- .authorize / .autorizar [numero] [qtd] : autoriza usuario (padrao 2 creditos)",
                 "- .remover / .remove / .unauthorize [numero] : remove autorizacao",
                 "- .lista / .list : lista usuarios autorizados e creditos",
+                "- .status / .info : mostra tempo ligado, cache e monitoramento",
                 "- .antidelete : ativa anti-delete e anti-edit em grupos",
                 "- .stopantidelete : desativa anti-delete e anti-edit em grupos",
                 "- .ver / .view / .save : resgata midia marcada para o seu privado",
