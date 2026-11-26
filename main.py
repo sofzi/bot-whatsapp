@@ -767,8 +767,8 @@ def on_message(c: NewClient, message: MessageEv):
                 c.reply_message("Nao foi possivel obter o video.", message, to=chat_clean)
                 return
 
-            sticker_ok = mp.convert_video_to_sticker(input_video, output_webp, max_duration=5)
-            audio_ok, audio_dur = mp.extract_audio(input_video, output_audio, max_duration=5)
+            sticker_ok = mp.convert_video_to_sticker(input_video, output_webp, max_duration=10)
+            audio_ok, audio_dur = mp.extract_audio(input_video, output_audio, max_duration=10)
 
             if sticker_ok:
                 if audio_ok:
@@ -824,7 +824,7 @@ def on_message(c: NewClient, message: MessageEv):
         try:
             c.download_any(media_target, input_path)
             if is_video:
-                ok = mp.convert_video_to_sticker(input_path, output_webp, max_duration=5)
+                ok = mp.convert_video_to_sticker(input_path, output_webp, max_duration=10)
             else:
                 ok = mp.convert_image_to_sticker(input_path, output_webp)
 

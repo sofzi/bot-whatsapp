@@ -4,7 +4,7 @@ Bot de WhatsApp em Python para criacao de figurinhas, download de videos e monit
 
 ## Funcionalidades
 
-- `.audiosticker`: corta os primeiros 5 segundos do video (ou de um link de video) e envia o sticker com o audio correspondente (funciona no privado e em grupos para usuarios autorizados).
+- `.audiosticker`: cria figurinha com som nativa a partir de um video (ou link de video) respeitando a duracao original ate o limite maximo de 10 segundos (funciona no privado e em grupos para usuarios autorizados).
   - Em grupo (sem permissao): responde "sai dai bixo".
   - No privado (sem permissao): responde "aguarde o adm".
 - `.fig`: cria figurinha normal a partir de foto ou video enviado/respondido.

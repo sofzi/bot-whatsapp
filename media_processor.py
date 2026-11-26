@@ -7,14 +7,15 @@ import yt_dlp
 # Pega o caminho do binario do FFmpeg portatil
 FFMPEG_BIN = imageio_ffmpeg.get_ffmpeg_exe()
 
-# Converte video para figurinha animada webp de ate 5 segundos (respeitando limite de 500 KB do WhatsApp)
-def convert_video_to_sticker(input_path: str, output_webp_path: str, max_duration: int = 5) -> bool:
+# Converte video para figurinha animada webp respeitando duracao do video (maximo 10s e 500 KB)
+def convert_video_to_sticker(input_path: str, output_webp_path: str, max_duration: int = 10) -> bool:
     degraus = [
         (15, 55, 512),
         (12, 45, 512),
         (10, 35, 448),
         (8, 25, 384),
         (6, 20, 320),
+        (5, 15, 256),
     ]
     try:
         for fps, q, detail in degraus:
@@ -113,8 +114,8 @@ def convert_sticker_to_media(input_webp_path: str, output_png_path: str, output_
         print(f"Erro ao converter sticker para midia: {e}")
         return False, ""
 
-# Extrai o audio do video nos primeiros 5 segundos em Ogg/Opus 48kHz para figurinha sonora nativa
-def extract_audio(input_path: str, output_audio_path: str, max_duration: int = 5) -> tuple[bool, int]:
+# Extrai o audio do video respeitando sua duracao real (maximo 10s) em Ogg/Opus 48kHz
+def extract_audio(input_path: str, output_audio_path: str, max_duration: int = 10) -> tuple[bool, int]:
     try:
         cmd = [
             FFMPEG_BIN,
