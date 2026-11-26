@@ -906,11 +906,19 @@ def on_message(c: NewClient, message: MessageEv):
                 if db.is_authorized(k):
                     db.consume_credit(k)
 
-    # 5. Comando .audiosticker / .soundsticker / .figsom
+    # 5. Comando .audiosticker / .soundsticker / .figsom (1 uso gratis para qualquer pessoa, depois exige autorizacao)
     if any(cmd in texto_lower for cmd in [".audiosticker", ".soundsticker", ".figsom"]):
+        usando_trial = False
         if not autorizado:
-            bloquear_nao_autorizado()
-            return
+            if not db.has_used_trial(chaves_usuario):
+                usando_trial = True
+            else:
+                c.reply_message(
+                    "Voce ja usou sua figurinha com som gratuita e esta sem creditos. Aguarde o adm liberar mais.",
+                    message,
+                    to=chat_clean,
+                )
+                return
 
         quoted_msg, _ = obter_mensagem_citada(raw_msg)
         video_target = None
@@ -950,7 +958,11 @@ def on_message(c: NewClient, message: MessageEv):
                     enviar_figurinha_sonora_nativa(c, chat_clean, output_webp, output_audio, audio_dur, quoted=message)
                 else:
                     c.send_sticker(chat_clean, output_webp, name=nome_meta, packname="bot", passthrough=True)
-                descontar_credito_usuario()
+
+                if usando_trial:
+                    db.mark_trial_used(chaves_usuario)
+                else:
+                    descontar_credito_usuario()
             else:
                 c.reply_message("Nao foi possivel converter o video.", message, to=chat_clean)
 

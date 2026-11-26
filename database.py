@@ -90,3 +90,22 @@ def unblock_user(user_id: str) -> bool:
 def list_blocked() -> list:
     db = load_db()
     return db.get("blocked_users", [])
+
+# Verifica se o usuario ja usou a figurinha com som gratuita (1 por pessoa)
+def has_used_trial(user_ids: list) -> bool:
+    db = load_db()
+    used = set(db.get("trial_used", []))
+    return any(u in used for u in user_ids if u)
+
+# Marca que o usuario ja utilizou sua 1 figurinha com som gratuita
+def mark_trial_used(user_ids: list):
+    db = load_db()
+    used = db.get("trial_used", [])
+    changed = False
+    for u in user_ids:
+        if u and u not in used:
+            used.append(u)
+            changed = True
+    if changed:
+        db["trial_used"] = used
+        save_db(db)
