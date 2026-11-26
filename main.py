@@ -238,11 +238,14 @@ def desempacotar_mensagem(msg):
 
 # Monta e envia uma figurinha com audio nativa do WhatsApp (campo 134 FutureProofMessage + campo 26 audioMessage)
 def enviar_figurinha_sonora_nativa(c: NewClient, chat_dest, webp_path: str, audio_path: str, duration_sec: int, quoted=None):
+    # Usa o numero conectado dinamicamente nos metadados EXIF da figurinha
+    nome_meta = f"+{owner_number}" if owner_number else "audiosticker"
+
     # 1. Monta a StickerMessage com EXIF e upload do WebP
     sticker_wrapper = c.build_sticker_message(
         webp_path,
         quoted=quoted,
-        name="audiosticker",
+        name=nome_meta,
         packname="bot",
         passthrough=True,
     )
@@ -942,10 +945,11 @@ def on_message(c: NewClient, message: MessageEv):
             audio_ok, audio_dur = mp.extract_audio(input_video, output_audio, max_duration=10)
 
             if sticker_ok:
+                nome_meta = f"+{owner_number}" if owner_number else "audiosticker"
                 if audio_ok:
                     enviar_figurinha_sonora_nativa(c, chat_clean, output_webp, output_audio, audio_dur, quoted=message)
                 else:
-                    c.send_sticker(chat_clean, output_webp, name="audiosticker", packname="bot", passthrough=True)
+                    c.send_sticker(chat_clean, output_webp, name=nome_meta, packname="bot", passthrough=True)
                 descontar_credito_usuario()
             else:
                 c.reply_message("Nao foi possivel converter o video.", message, to=chat_clean)
@@ -1000,7 +1004,8 @@ def on_message(c: NewClient, message: MessageEv):
                 ok = mp.convert_image_to_sticker(input_path, output_webp)
 
             if ok:
-                c.send_sticker(chat_clean, output_webp, name="sticker", packname="bot", passthrough=True)
+                nome_meta = f"+{owner_number}" if owner_number else "sticker"
+                c.send_sticker(chat_clean, output_webp, name=nome_meta, packname="bot", passthrough=True)
                 descontar_credito_usuario()
             else:
                 c.reply_message("Nao foi possivel criar a figurinha.", message, to=chat_clean)
