@@ -72,6 +72,10 @@ os.makedirs(TEMP_DIR, exist_ok=True)
 # Cache de mensagens para anti-delete
 message_cache = {}
 
+# Controle do anti-delete em grupos (desativado por padrao para nao sobrecarregar)
+antidelete_grupos_global = False
+antidelete_grupos_ativos = set()
+
 # Inicializa cliente do WhatsApp com sessao nova
 client = NewClient("session.db")
 owner_jid = None
@@ -128,6 +132,7 @@ def on_connected(c: NewClient, _: ConnectedEv):
         owner_jid = build_jid(owner_number, "s.whatsapp.net")
         print("\n========================================")
         print(f"Conectado como: {me.PushName} ({owner_number})")
+        print("Anti-delete: Ativo no privado | Desativado em grupos (use .antidelete para ativar)")
         print("Digite 'sair' no terminal ou .desligar no WhatsApp para fechar.")
         print("========================================\n")
     except Exception as e:
@@ -136,7 +141,7 @@ def on_connected(c: NewClient, _: ConnectedEv):
 # Evento de recebimento de mensagens
 @client.event(MessageEv)
 def on_message(c: NewClient, message: MessageEv):
-    global owner_jid, owner_number
+    global owner_jid, owner_number, antidelete_grupos_global
 
     msg_info = message.Info
     msg_id = msg_info.ID
@@ -157,8 +162,14 @@ def on_message(c: NewClient, message: MessageEv):
 
     raw_msg = desempacotar_mensagem(message.Message)
 
+    # Verifica se o anti-delete deve monitorar esta conversa
+    monitorar_conversa = (not is_group) or antidelete_grupos_global or (chat.User in antidelete_grupos_ativos)
+
     # 1. Anti-delete: verifica se a mensagem realmente possui um protocolMessage
     if has_field(raw_msg, "protocolMessage"):
+        if not monitorar_conversa:
+            return
+
         protocol_msg = raw_msg.protocolMessage
         if protocol_msg.type == 0 and has_field(protocol_msg, "key") and protocol_msg.key.ID:
             revoked_id = protocol_msg.key.ID
@@ -202,78 +213,37 @@ def on_message(c: NewClient, message: MessageEv):
 
     # Extrai o texto da mensagem
     texto_mensagem = (extract_text(raw_msg) or "").strip()
+    texto_lower = texto_mensagem.lower()
 
-    # Identifica o nome do local (Grupo ou Privado)
-    chat_label = f"Privado (+{sender_number})"
-    if is_group:
-        chat_label = f"Grupo ({chat.User})"
-        try:
-            g_info = c.get_group_info(chat)
-            if g_info and g_info.GroupName and g_info.GroupName.Name:
-                chat_label = f"Grupo {g_info.GroupName.Name}"
-        except Exception:
-            pass
-
-    if texto_mensagem:
-        print(f"[Mensagem] De +{sender_number} em {chat_label}: {texto_mensagem[:50]}")
-
-    # Salva copia de midia em temp apenas se a mensagem realmente contiver midia
-    salved_media = None
-    try:
-        if has_field(raw_msg, "imageMessage"):
-            salved_media = os.path.join(TEMP_DIR, f"{msg_id}.jpg")
-            c.download_any(raw_msg, salved_media)
-            print(f"[Midia salva] Imagem de +{sender_number} em {chat_label}")
-        elif has_field(raw_msg, "videoMessage"):
-            salved_media = os.path.join(TEMP_DIR, f"{msg_id}.mp4")
-            c.download_any(raw_msg, salved_media)
-            print(f"[Midia salva] Video de +{sender_number} em {chat_label}")
-        elif has_field(raw_msg, "audioMessage"):
-            salved_media = os.path.join(TEMP_DIR, f"{msg_id}.ogg")
-            c.download_any(raw_msg, salved_media)
-            print(f"[Midia salva] Audio de +{sender_number} em {chat_label}")
-    except Exception:
-        salved_media = None
-
-    # Guarda mensagem no cache para o anti-delete
-    if texto_mensagem or salved_media:
-        message_cache[msg_id] = {
-            "sender_number": sender_number,
-            "pushname": msg_info.Pushname or "",
-            "chat_name": chat_label,
-            "text": texto_mensagem,
-            "media_path": salved_media,
-            "time": datetime.now().strftime("%H:%M:%S")
-        }
-
-    # Mantem o cache com no maximo 1000 mensagens
-    if len(message_cache) > 1000:
-        oldest_key = next(iter(message_cache))
-        old_data = message_cache.pop(oldest_key)
-        if old_data.get("media_path") and os.path.exists(old_data["media_path"]):
-            try:
-                os.remove(old_data["media_path"])
-            except Exception:
-                pass
-
-    # 2. Comando .ping
-    if texto_mensagem.lower() == ".ping":
-        agora_ms = int(time.time() * 1000)
-        msg_ts = msg_info.Timestamp
-        if msg_ts < 100000000000:
-            msg_ts *= 1000
-        ping_ms = agora_ms - msg_ts
-        if ping_ms <= 0 or ping_ms > 10000:
-            t0 = time.perf_counter()
-            c.get_me()
-            ping_ms = max(1, int((time.perf_counter() - t0) * 1000))
-        c.reply_message(f"Pong! {ping_ms}ms", message, to=chat_clean)
-        return
-
-    # 3. Comandos de Administrador (Dono)
+    # 2. Comandos de Administrador (Dono)
     if is_from_me:
+        # Comando .antidelete (ativa leitura de grupos)
+        if texto_lower == ".antidelete":
+            if is_group:
+                antidelete_grupos_ativos.add(chat.User)
+                print(f"[Anti-Delete] Ativado para o grupo {chat.User}")
+                c.reply_message("Anti-delete ativado neste grupo.", message, to=chat_clean)
+            else:
+                antidelete_grupos_global = True
+                print("[Anti-Delete] Ativado para todos os grupos.")
+                c.reply_message("Anti-delete ativado para todos os grupos.", message, to=chat_clean)
+            return
+
+        # Comando .stopantidelete (para leitura de grupos)
+        if texto_lower == ".stopantidelete":
+            if is_group:
+                antidelete_grupos_ativos.discard(chat.User)
+                print(f"[Anti-Delete] Desativado para o grupo {chat.User}")
+                c.reply_message("Anti-delete desativado neste grupo.", message, to=chat_clean)
+            else:
+                antidelete_grupos_global = False
+                antidelete_grupos_ativos.clear()
+                print("[Anti-Delete] Desativado em todos os grupos.")
+                c.reply_message("Anti-delete desativado em todos os grupos.", message, to=chat_clean)
+            return
+
         # Comando para desligar
-        if texto_mensagem.lower() in [".encerrar", ".desligar", ".stop"]:
+        if texto_lower in [".encerrar", ".desligar", ".stop"]:
             print("Comando de encerramento recebido pelo WhatsApp. Desligando...")
             try:
                 c.reply_message("Encerrando bot...", message, to=chat_clean)
@@ -283,7 +253,7 @@ def on_message(c: NewClient, message: MessageEv):
             os._exit(0)
 
         # Comando .authorize
-        if texto_mensagem.lower().startswith(".authorize"):
+        if texto_lower.startswith(".authorize"):
             partes = texto_mensagem.split()
             qtd = 2
             alvo = None
@@ -311,7 +281,7 @@ def on_message(c: NewClient, message: MessageEv):
             return
 
         # Comando .remover
-        if texto_mensagem.lower().startswith(".remover"):
+        if texto_lower.startswith(".remover"):
             partes = texto_mensagem.split()
             alvo = None
 
@@ -333,8 +303,22 @@ def on_message(c: NewClient, message: MessageEv):
                 c.reply_message("Uso: responda a mensagem com .remover ou digite: .remover <numero>", message, to=chat_clean)
             return
 
-    # 3. Comando .audiosticker
-    if ".audiosticker" in texto_mensagem.lower():
+    # 3. Comando .ping
+    if texto_lower == ".ping":
+        agora_ms = int(time.time() * 1000)
+        msg_ts = msg_info.Timestamp
+        if msg_ts < 100000000000:
+            msg_ts *= 1000
+        ping_ms = agora_ms - msg_ts
+        if ping_ms <= 0 or ping_ms > 10000:
+            t0 = time.perf_counter()
+            c.get_me()
+            ping_ms = max(1, int((time.perf_counter() - t0) * 1000))
+        c.reply_message(f"Pong! {ping_ms}ms", message, to=chat_clean)
+        return
+
+    # 4. Comando .audiosticker
+    if ".audiosticker" in texto_lower:
         # Bloqueio em grupos
         if is_group:
             c.reply_message("sai dai bixo", message, to=chat_clean)
@@ -392,6 +376,62 @@ def on_message(c: NewClient, message: MessageEv):
                         os.remove(temp_file)
                     except Exception:
                         pass
+        return
+
+    # 5. Cache do Anti-Delete: ignora grupos se o monitoramento nao estiver ativo
+    if not monitorar_conversa:
+        return
+
+    chat_label = f"Privado (+{sender_number})"
+    if is_group:
+        chat_label = f"Grupo ({chat.User})"
+        try:
+            g_info = c.get_group_info(chat)
+            if g_info and g_info.GroupName and g_info.GroupName.Name:
+                chat_label = f"Grupo {g_info.GroupName.Name}"
+        except Exception:
+            pass
+
+    if texto_mensagem:
+        print(f"[Mensagem] De +{sender_number} em {chat_label}: {texto_mensagem[:50]}")
+
+    # Salva copia de midia em temp apenas nas conversas monitoradas
+    salved_media = None
+    try:
+        if has_field(raw_msg, "imageMessage"):
+            salved_media = os.path.join(TEMP_DIR, f"{msg_id}.jpg")
+            c.download_any(raw_msg, salved_media)
+            print(f"[Midia salva] Imagem de +{sender_number} em {chat_label}")
+        elif has_field(raw_msg, "videoMessage"):
+            salved_media = os.path.join(TEMP_DIR, f"{msg_id}.mp4")
+            c.download_any(raw_msg, salved_media)
+            print(f"[Midia salva] Video de +{sender_number} em {chat_label}")
+        elif has_field(raw_msg, "audioMessage"):
+            salved_media = os.path.join(TEMP_DIR, f"{msg_id}.ogg")
+            c.download_any(raw_msg, salved_media)
+            print(f"[Midia salva] Audio de +{sender_number} em {chat_label}")
+    except Exception:
+        salved_media = None
+
+    if texto_mensagem or salved_media:
+        message_cache[msg_id] = {
+            "sender_number": sender_number,
+            "pushname": msg_info.Pushname or "",
+            "chat_name": chat_label,
+            "text": texto_mensagem,
+            "media_path": salved_media,
+            "time": datetime.now().strftime("%H:%M:%S")
+        }
+
+    # Mantem o cache com no maximo 1000 mensagens
+    if len(message_cache) > 1000:
+        oldest_key = next(iter(message_cache))
+        old_data = message_cache.pop(oldest_key)
+        if old_data.get("media_path") and os.path.exists(old_data["media_path"]):
+            try:
+                os.remove(old_data["media_path"])
+            except Exception:
+                pass
 
 if __name__ == "__main__":
     print("Iniciando bot. Escaneie o QR Code que aparecera no terminal.")
