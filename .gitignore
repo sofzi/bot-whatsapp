@@ -1,0 +1,7 @@
+session.db
+session.db-shm
+session.db-wal
+temp/
+__pycache__/
+*.pyc
+.env
