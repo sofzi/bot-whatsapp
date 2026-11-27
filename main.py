@@ -788,6 +788,8 @@ def on_message(c: NewClient, message: MessageEv):
         ".block",
         ".desbloquear",
         ".unblock",
+        ".bloqueados",
+        ".listabloqueados",
         ".sudo",
         ".unsudo",
         ".nosudo",
@@ -1288,6 +1290,16 @@ def on_message(c: NewClient, message: MessageEv):
                 c.reply_message("Uso: responda a mensagem com .desbloquear ou digite: .desbloquear <numero>", message, to=chat_clean)
             return
 
+        # Comando .bloqueados / .listabloqueados (lista todos os usuarios bloqueados no bot)
+        if texto_lower in [".bloqueados", ".listabloqueados"]:
+            bloqueados = db.list_blocked()
+            if not bloqueados:
+                c.reply_message("Nenhum usuario bloqueado no momento.", message, to=chat_clean)
+            else:
+                linhas = ["Usuarios bloqueados:"] + [f"- +{num}" for num in bloqueados]
+                c.reply_message("\n".join(linhas), message, to=chat_clean)
+            return
+
         # Comando .lista / .list (lista todos os usuarios autorizados e seus creditos)
         if texto_lower in [".lista", ".list"]:
             autorizados = db.list_authorized()
@@ -1690,6 +1702,7 @@ def on_message(c: NewClient, message: MessageEv):
                 "- .limpar / .clearcache : limpa todo o cache e arquivos temporarios",
                 "- .bloquear / .block [numero] : ignora usuario em silencio no bot",
                 "- .desbloquear / .unblock [numero] : remove usuario do bloqueio no bot",
+                "- .bloqueados / .listabloqueados : lista usuarios bloqueados no bot",
                 "- .ban / .kick [numero] : remove participante do grupo",
                 "- .add / .adicionar <numero> : adiciona numero ao grupo",
                 "- .promover / .promote [numero] : torna participante admin do grupo",
