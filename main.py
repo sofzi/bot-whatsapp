@@ -1566,6 +1566,7 @@ def on_message(c: NewClient, message: MessageEv):
             "- .mp3 / .audio <link ou video> : baixa audio MP3 (YouTube, SoundCloud, Spotify)",
             "- .lembrete / .remind <tempo> <msg> : agenda um lembrete (ex: 30m, 2h, 10s)",
             "- .ia <pergunta> : pergunta algo para a IA (Gemini)",
+            "- .mendingo : ganha 2 creditos gratis (1 vez por pessoa)",
             "- .ping : mostra o tempo de resposta em ms",
             "- .comandos / .help : lista os comandos",
         ]
@@ -1781,6 +1782,17 @@ def on_message(c: NewClient, message: MessageEv):
             for k in chaves_usuario:
                 if db.is_authorized(k):
                     db.consume_credit(k)
+
+    # 4E. Comando .mendingo (ganha 2 creditos uma unica vez por pessoa)
+    if texto_lower == ".mendingo":
+        if is_from_me:
+            c.reply_message("voce e o dono, nao precisa mendigar credito", message, to=chat_clean)
+            return
+        if db.try_claim_mendingo(chaves_usuario, 2):
+            c.reply_message("ta bom mendingo, toma ai 2 creditos (so dessa vez)", message, to=chat_clean)
+        else:
+            c.reply_message("sai dai mendingo, ja pegou seus 2 creditos", message, to=chat_clean)
+        return
 
     # 5. Comando .audiosticker / .soundsticker / .figsom (1 uso gratis para qualquer pessoa, depois exige autorizacao)
     if any(cmd in texto_lower for cmd in [".audiosticker", ".soundsticker", ".figsom"]):

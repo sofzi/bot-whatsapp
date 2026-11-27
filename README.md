@@ -15,6 +15,7 @@ Bot de WhatsApp em Python para criacao de figurinhas com som, download de videos
 - `.mp3` / `.audio <link ou video>`: baixa apenas o audio em MP3 (YouTube, SoundCloud, Spotify track ou video respondido).
 - `.lembrete` / `.remind <tempo> <mensagem>`: agenda um lembrete (ex: `10s`, `30m`, `2h`, `1d`) e envia quando vencer.
 - `.ia <pergunta>`: faz uma pergunta para a IA (Gemini) ou responde analisando uma mensagem citada.
+- `.mendingo`: concede 2 creditos gratuitos uma unica vez por usuario.
 - `.ping`: responde com o tempo de resposta em milissegundos (ms).
 
 ### Administrador (exclusivos do dono)

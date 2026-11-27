@@ -298,3 +298,25 @@ def set_ia_allowed_group(chat_id: str, allowed: bool):
             groups.discard(chat_id)
         db["ia_allowed_groups"] = sorted(list(groups))
         _save_db_unlocked(db)
+
+# Concede 2 creditos uma unica vez pelo comando .mendingo de forma atomica
+def try_claim_mendingo(user_ids: list, credits: int = 2) -> bool:
+    valid_ids = [u for u in user_ids if u]
+    if not valid_ids:
+        return False
+    with _db_lock:
+        db = _load_db_unlocked()
+        used = db.get("mendingo_used", [])
+        used_set = set(used)
+        if any(u in used_set for u in valid_ids):
+            return False
+        for u in valid_ids:
+            if u not in used:
+                used.append(u)
+        db["mendingo_used"] = used
+        users = db.get("authorized_users", {})
+        primary = valid_ids[0]
+        users[primary] = users.get(primary, 0) + credits
+        db["authorized_users"] = users
+        _save_db_unlocked(db)
+        return True
