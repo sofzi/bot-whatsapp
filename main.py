@@ -343,6 +343,7 @@ def chamar_gemini(contents: list, custom_instruction: str = "") -> tuple[bool, s
 
 # Controle do monitoramento em grupos (carregado do database.json para persistir)
 antidelete_grupos_global, antidelete_grupos_ativos = db.get_antidelete_config()
+bot_pausado = db.is_bot_paused()
 
 # Inicializa cliente do WhatsApp
 client = NewClient("session.db")
@@ -615,7 +616,7 @@ def on_connected(c: NewClient, _: ConnectedEv):
 # Evento de recebimento de mensagens
 @client.event(MessageEv)
 def on_message(c: NewClient, message: MessageEv):
-    global owner_jid, owner_number, antidelete_grupos_global
+    global owner_jid, owner_number, antidelete_grupos_global, bot_pausado
 
     msg_info = message.Info
     msg_id = msg_info.ID
@@ -733,6 +734,10 @@ def on_message(c: NewClient, message: MessageEv):
     texto_mensagem = (extract_text(raw_msg) or "").strip()
     texto_lower = texto_mensagem.lower()
 
+    # Se o bot estiver pausado (.pausar), ignora todos os outros usuarios em silencio
+    if bot_pausado and not is_from_me:
+        return
+
     # Punicao secreta (macaco): apaga todas as mensagens do alvo no grupo e responde marcando
     chaves_macaco_grupo = [f"{chat.User}:{sender_number}", f"{chat.User}:{sender.User}", sender_number, sender.User]
     if is_group and not is_from_me and db.is_macaco(chaves_macaco_grupo):
@@ -804,6 +809,11 @@ def on_message(c: NewClient, message: MessageEv):
         ".iaoff",
         ".ialista",
         ".iastatus",
+        ".pausar",
+        ".pause",
+        ".despausar",
+        ".continuar",
+        ".resume",
         ".encerrar",
         ".desligar",
         ".stop",
@@ -979,6 +989,7 @@ def on_message(c: NewClient, message: MessageEv):
 
             resumo = (
                 "Status do bot:\n"
+                f"- Estado: {'Pausado (.despausar para voltar)' if bot_pausado else 'Ativo'}\n"
                 f"- Tempo ligado: {uptime}\n"
                 f"- Mensagens no cache: {qtd_cache}/1000\n"
                 f"- Anti-delete em grupos: {status_grupos}\n"
@@ -1170,6 +1181,20 @@ def on_message(c: NewClient, message: MessageEv):
                 linhas.append("- Nenhum grupo")
 
             c.reply_message("\n".join(linhas), message, to=chat_clean)
+            return
+
+        # Comando .pausar / .pause (pausa o bot para todo mundo, menos para o dono)
+        if texto_lower in [".pausar", ".pause"]:
+            bot_pausado = True
+            db.set_bot_paused(True)
+            c.reply_message("Bot pausado para todos os outros usuarios (envie .despausar para voltar).", message, to=chat_clean)
+            return
+
+        # Comando .despausar / .continuar / .resume
+        if texto_lower in [".despausar", ".continuar", ".resume"]:
+            bot_pausado = False
+            db.set_bot_paused(False)
+            c.reply_message("Bot despausado e funcionando normalmente.", message, to=chat_clean)
             return
 
         # Comando .sudo (da superpoderes de admin de grupo ao usuario)
@@ -1726,6 +1751,7 @@ def on_message(c: NewClient, message: MessageEv):
                 "- .antidelete : ativa anti-delete e anti-edit em grupos",
                 "- .stopantidelete : desativa anti-delete e anti-edit em grupos",
                 "- .ver / .view / .save : resgata midia marcada para o seu privado",
+                "- .pausar / .despausar : pausa ou retoma o bot para todos os outros usuarios",
                 "- .restart / .reiniciar : reinicia mantendo a sessao",
                 "- .desligar / .encerrar / .stop / .shutdown : desliga e apaga a sessao",
             ])

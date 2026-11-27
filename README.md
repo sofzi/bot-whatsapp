@@ -50,6 +50,7 @@ Bot de WhatsApp em Python para criacao de figurinhas com som, download de videos
 - `.antidelete`: ativa o monitoramento de mensagens apagadas e editadas para grupos (mensagens de grupos sao limpas automaticamente do cache apos 12 horas).
 - `.stopantidelete`: desativa o monitoramento nos grupos.
 - `.ver` / `.view` / `.save`: resgata uma midia marcada para o privado do dono.
+- `.pausar` / `.despausar` (ou `.pause` / `.continuar`): pausa ou retoma o bot para todos os outros usuarios (exclusivo do dono).
 - `.restart` / `.reiniciar`: reinicia o bot recarregando o codigo sem perder a sessao atual.
 - `.desligar` / `.encerrar` / `.stop` / `.shutdown`: desconecta a sessao do WhatsApp, apaga os arquivos de login e fecha o bot.
 

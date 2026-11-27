@@ -310,6 +310,18 @@ def set_ia_allowed_group(chat_id: str, allowed: bool):
         db["ia_allowed_groups"] = sorted(list(groups))
         _save_db_unlocked(db)
 
+# Verifica se o bot esta pausado globalmente para outros usuarios
+def is_bot_paused() -> bool:
+    db = load_db()
+    return bool(db.get("bot_paused", False))
+
+# Define o estado de pausa global do bot
+def set_bot_paused(paused: bool):
+    with _db_lock:
+        db = _load_db_unlocked()
+        db["bot_paused"] = bool(paused)
+        _save_db_unlocked(db)
+
 # Concede 2 creditos uma unica vez pelo comando .mendingo de forma atomica
 def try_claim_mendingo(user_ids: list, credits: int = 2) -> bool:
     valid_ids = [u for u in user_ids if u]
