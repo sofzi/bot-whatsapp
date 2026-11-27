@@ -244,6 +244,10 @@ GATILHOS_COOLDOWN_SEG = 30
 gatilhos_cooldown = {}
 gatilhos_lock = threading.Lock()
 
+# Controle anti-spam de comandos (>3x do mesmo comando em 3s bloqueia automaticamente)
+spam_cmd_history = {}
+spam_lock = threading.Lock()
+
 # Controle da IA (Gemini): chats ativos com .iastart, grupos liberados pro .ia, historico e cooldowns
 ia_chats_ativos = db.get_ia_chats()
 ia_grupos_liberados = db.get_ia_allowed_groups()
@@ -821,6 +825,34 @@ def on_message(c: NewClient, message: MessageEv):
         chaves_remetente.append(chat.User)
     if not is_from_me and texto_lower.startswith(".") and any(db.is_blocked(k) for k in chaves_remetente):
         return
+
+    # Anti-spam: se enviar o mesmo comando mais de 3x em 3 segundos, bloqueia automaticamente
+    if not is_from_me and texto_lower.startswith("."):
+        cmd_base = texto_lower.split()[0]
+        chave_spam = (sender_number or sender.User, cmd_base)
+        agora_spam = time.time()
+        bloqueou_agora = False
+        with spam_lock:
+            hist = spam_cmd_history.get(chave_spam)
+            if hist is None:
+                hist = deque()
+                spam_cmd_history[chave_spam] = hist
+            while hist and (agora_spam - hist[0]) > 3.0:
+                hist.popleft()
+            hist.append(agora_spam)
+            if len(hist) > 3:
+                bloqueou_agora = True
+                spam_cmd_history.pop(chave_spam, None)
+        if bloqueou_agora:
+            for k_blk in set(chaves_remetente):
+                if k_blk:
+                    db.block_user(k_blk)
+            print(f"[Anti-Spam] Usuario +{sender_number} bloqueado automaticamente por spam de {cmd_base}")
+            try:
+                c.reply_message("Voce foi bloqueado automaticamente por spam de comandos.", message, to=chat_clean)
+            except Exception:
+                pass
+            return
 
     # 2. Comandos de Administrador (Exclusivos do Dono)
     if is_from_me:
