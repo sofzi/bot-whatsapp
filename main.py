@@ -795,6 +795,8 @@ def on_message(c: NewClient, message: MessageEv):
         ".iapersonalidade",
         ".iaon",
         ".iaoff",
+        ".ialista",
+        ".iastatus",
         ".encerrar",
         ".desligar",
         ".stop",
@@ -1066,6 +1068,43 @@ def on_message(c: NewClient, message: MessageEv):
                     ia_grupos_liberados.discard(chat.User)
                 db.set_ia_allowed_group(chat.User, False)
                 c.reply_message("Comando .ia bloqueado neste grupo (apenas o dono pode usar).", message, to=chat_clean)
+            return
+
+        # Comando .ialista / .iastatus (lista onde .iastart e .iaon estao ligados)
+        if texto_lower in [".ialista", ".iastatus"]:
+            with ia_lock:
+                ativos_copia = dict(ia_chats_ativos)
+                liberados_copia = sorted(list(ia_grupos_liberados))
+
+            def _resolver_nome_chat(cid: str) -> str:
+                try:
+                    g_info = c.get_group_info(build_jid(cid, "g.us"))
+                    if g_info and g_info.GroupName and g_info.GroupName.Name:
+                        return f"Grupo {g_info.GroupName.Name} ({cid})"
+                except Exception:
+                    pass
+                return f"Chat +{cid}"
+
+            linhas = ["Status da IA:"]
+            pers = db.get_ia_personality()
+            linhas.append(f"Personalidade padrao: {pers if pers else '(padrao normal)'}")
+
+            linhas.append("\nIA automatica (.iastart) ativa em:")
+            if ativos_copia:
+                for cid, instr in ativos_copia.items():
+                    label = _resolver_nome_chat(cid)
+                    linhas.append(f"- {label}" + (f" | {instr}" if instr else ""))
+            else:
+                linhas.append("- Nenhum chat")
+
+            linhas.append("\nComando .ia liberado (.iaon) em:")
+            if liberados_copia:
+                for cid in liberados_copia:
+                    linhas.append(f"- {_resolver_nome_chat(cid)}")
+            else:
+                linhas.append("- Nenhum grupo")
+
+            c.reply_message("\n".join(linhas), message, to=chat_clean)
             return
 
         # Comando .sudo (da superpoderes de admin de grupo ao usuario)
@@ -1600,6 +1639,7 @@ def on_message(c: NewClient, message: MessageEv):
                 "- .iastop : desativa resposta automatica da IA neste chat",
                 "- .iapersonalidade <texto|reset> : define o jeito da IA responder",
                 "- .iaon / .iaoff : libera ou bloqueia .ia para todos no grupo",
+                "- .ialista / .iastatus : lista chats com IA automatica e .iaon",
                 "- .antidelete : ativa anti-delete e anti-edit em grupos",
                 "- .stopantidelete : desativa anti-delete e anti-edit em grupos",
                 "- .ver / .view / .save : resgata midia marcada para o seu privado",
