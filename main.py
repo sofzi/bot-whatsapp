@@ -150,8 +150,70 @@ def _patched_extract_thumbnail(self, *args, **kwargs) -> bytes:
         pass
     return b""
 
+from io import BytesIO
+from PIL import Image
+import neonize.client as _neonize_client
+import neonize.utils.sticker as _neonize_sticker
+
 FFmpeg.extract_info = _patched_extract_info
 FFmpeg.extract_thumbnail = _patched_extract_thumbnail
+
+# Injeta EXIF (numero e nome do pacote) no WebP sem depender do webpmux externo
+def _inject_webp_exif_riff(webp_bytes: bytes, exif_bytes: bytes) -> bytes:
+    if len(webp_bytes) < 12 or webp_bytes[:4] != b"RIFF" or webp_bytes[8:12] != b"WEBP":
+        return webp_bytes
+    pos = 12
+    chunks = []
+    has_vp8x = False
+    while pos + 8 <= len(webp_bytes):
+        fourcc = webp_bytes[pos:pos + 4]
+        size = int.from_bytes(webp_bytes[pos + 4:pos + 8], "little")
+        end = pos + 8 + size
+        if end > len(webp_bytes):
+            break
+        payload = bytearray(webp_bytes[pos + 8:end])
+        if fourcc == b"VP8X" and len(payload) >= 1:
+            has_vp8x = True
+            payload[0] |= 0x08  # Flag EXIF
+        if fourcc != b"EXIF":
+            chunks.append((fourcc, bytes(payload)))
+        pos = end + (size & 1)
+
+    if not has_vp8x:
+        return b""
+
+    chunks.append((b"EXIF", exif_bytes))
+    body = bytearray(b"WEBP")
+    for fourcc, payload in chunks:
+        body.extend(fourcc)
+        body.extend(len(payload).to_bytes(4, "little"))
+        body.extend(payload)
+        if len(payload) & 1:
+            body.append(0)
+    return b"RIFF" + len(body).to_bytes(4, "little") + bytes(body)
+
+def _patched_add_exif_to_sticker(sticker: bytes, name: str = "", packname: str = "") -> bytes | None:
+    try:
+        exif_bytes = _neonize_sticker.add_exif(name=name, packname=packname)
+        injected = _inject_webp_exif_riff(sticker, exif_bytes)
+        if injected:
+            return injected
+        # Fallback para WebP estatico sem chunk VP8X
+        img = Image.open(BytesIO(sticker))
+        out = BytesIO()
+        is_anim = getattr(img, "is_animated", False) and getattr(img, "n_frames", 1) > 1
+        if is_anim:
+            img.save(out, format="WEBP", exif=exif_bytes, save_all=True, loop=0)
+        else:
+            img.save(out, format="WEBP", exif=exif_bytes)
+        data = out.getvalue()
+        return data if data else None
+    except Exception as e:
+        print(f"Erro ao gravar EXIF na figurinha: {e}")
+        return None
+
+_neonize_sticker.add_exif_to_sticker = _patched_add_exif_to_sticker
+_neonize_client.add_exif_to_sticker = _patched_add_exif_to_sticker
 
 TEMP_DIR = "temp"
 os.makedirs(TEMP_DIR, exist_ok=True)
