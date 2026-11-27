@@ -1919,7 +1919,7 @@ def on_message(c: NewClient, message: MessageEv):
 
     def bloquear_nao_autorizado():
         if not is_group:
-            c.reply_message("faz o pix", message, to=chat_clean)
+            c.reply_message("faz o pix ta sem creditos", message, to=chat_clean)
 
     def descontar_credito_usuario():
         if not is_from_me:
@@ -1948,12 +1948,7 @@ def on_message(c: NewClient, message: MessageEv):
                 if db.try_reserve_trial(chaves_usuario):
                     usando_trial = True
                 else:
-                    if not is_group:
-                        c.reply_message(
-                            "faz o pix",
-                            message,
-                            to=chat_clean,
-                        )
+                    c.reply_message("faz o pix ta sem creditos", message, to=chat_clean)
                     return
 
         quoted_msg, _ = obter_mensagem_citada(raw_msg)
@@ -2046,7 +2041,7 @@ def on_message(c: NewClient, message: MessageEv):
     # 6. Comando .fig / .sticker / .fign (figurinha estatica ou animada sem audio separado)
     if any(texto_lower == cmd or texto_lower.startswith(cmd + " ") for cmd in [".fig", ".sticker", ".fign"]):
         if not autorizado:
-            bloquear_nao_autorizado()
+            c.reply_message("faz o pix ta sem creditos", message, to=chat_clean)
             return
 
         recortar = not (texto_lower == ".fign" or texto_lower.startswith(".fign "))
