@@ -244,8 +244,9 @@ GATILHOS_COOLDOWN_SEG = 30
 gatilhos_cooldown = {}
 gatilhos_lock = threading.Lock()
 
-# Controle da IA (Gemini): chats ativos com .iastart, historico curto e cooldowns
+# Controle da IA (Gemini): chats ativos com .iastart, grupos liberados pro .ia, historico e cooldowns
 ia_chats_ativos = db.get_ia_chats()
+ia_grupos_liberados = db.get_ia_allowed_groups()
 ia_chat_history = {}
 ia_user_cooldown = {}
 ia_auto_cooldown = {}
@@ -792,6 +793,8 @@ def on_message(c: NewClient, message: MessageEv):
         ".iastart",
         ".iastop",
         ".iapersonalidade",
+        ".iaon",
+        ".iaoff",
         ".encerrar",
         ".desligar",
         ".stop",
@@ -1046,6 +1049,23 @@ def on_message(c: NewClient, message: MessageEv):
             else:
                 db.set_ia_personality(nova_pers)
                 c.reply_message(f"Personalidade da IA atualizada para:\n{nova_pers}", message, to=chat_clean)
+            return
+
+        # Comando .iaon / .iaoff (libera ou bloqueia o uso de .ia para todos no grupo)
+        if texto_lower in [".iaon", ".iaoff"]:
+            if not is_group:
+                c.reply_message("Este comando so funciona dentro de grupos.", message, to=chat_clean)
+                return
+            if texto_lower == ".iaon":
+                with ia_lock:
+                    ia_grupos_liberados.add(chat.User)
+                db.set_ia_allowed_group(chat.User, True)
+                c.reply_message("Comando .ia liberado para todos neste grupo.", message, to=chat_clean)
+            else:
+                with ia_lock:
+                    ia_grupos_liberados.discard(chat.User)
+                db.set_ia_allowed_group(chat.User, False)
+                c.reply_message("Comando .ia bloqueado neste grupo (apenas o dono pode usar).", message, to=chat_clean)
             return
 
         # Comando .sudo (da superpoderes de admin de grupo ao usuario)
@@ -1578,6 +1598,7 @@ def on_message(c: NewClient, message: MessageEv):
                 "- .iastart [instrucao] : ativa resposta automatica da IA neste chat",
                 "- .iastop : desativa resposta automatica da IA neste chat",
                 "- .iapersonalidade <texto|reset> : define o jeito da IA responder",
+                "- .iaon / .iaoff : libera ou bloqueia .ia para todos no grupo",
                 "- .antidelete : ativa anti-delete e anti-edit em grupos",
                 "- .stopantidelete : desativa anti-delete e anti-edit em grupos",
                 "- .ver / .view / .save : resgata midia marcada para o seu privado",
@@ -1667,8 +1688,15 @@ def on_message(c: NewClient, message: MessageEv):
         c.reply_message(f"Lembrete agendado para daqui a {partes[1]}.", message, to=chat_clean)
         return
 
-    # 4C. Comando .ia <pergunta> (livre para qualquer usuario, com cooldown e limite anti-abuso)
+    # 4C. Comando .ia <pergunta> (no grupo, exige .iaon ou ser o dono; com cooldown e limite anti-abuso)
     if texto_lower == ".ia" or texto_lower.startswith(".ia "):
+        if is_group and not is_from_me:
+            with ia_lock:
+                grupo_liberado_ia = chat.User in ia_grupos_liberados
+            if not grupo_liberado_ia:
+                c.reply_message("sai dai maluco", message, to=chat_clean)
+                return
+
         if not is_from_me:
             chave_cd_ia = sender_number or sender.User
             agora_ia = time.time()

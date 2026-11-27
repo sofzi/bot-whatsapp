@@ -281,3 +281,20 @@ def set_ia_personality(personality: str):
         db = _load_db_unlocked()
         db["ia_personality"] = (personality or "").strip()
         _save_db_unlocked(db)
+
+# Carrega grupos onde o comando .ia esta liberado para todos
+def get_ia_allowed_groups() -> set:
+    db = load_db()
+    return set(db.get("ia_allowed_groups", []))
+
+# Libera ou bloqueia o uso do comando .ia em um grupo
+def set_ia_allowed_group(chat_id: str, allowed: bool):
+    with _db_lock:
+        db = _load_db_unlocked()
+        groups = set(db.get("ia_allowed_groups", []))
+        if allowed:
+            groups.add(chat_id)
+        else:
+            groups.discard(chat_id)
+        db["ia_allowed_groups"] = sorted(list(groups))
+        _save_db_unlocked(db)
