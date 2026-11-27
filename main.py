@@ -1663,14 +1663,6 @@ def on_message(c: NewClient, message: MessageEv):
         c.reply_message(f"Pong! {ping_ms}ms", message, to=chat_clean)
         return
 
-    # 4A. Gatilho "nego": sempre que a mensagem contiver "nego", responde com a apresentacao da Verity
-    # (ignora comandos que comecam com "." e nao usa return para a mensagem continuar sendo salva no cache)
-    if not is_from_me and not texto_lower.startswith(".") and re.search(r"\bnego\b", texto_lower):
-        try:
-            c.reply_message("Eu tenho vários contatos nas ruas, crioulo. Eu posso fazer o rato me dar o queijo. Sim, isso é real. Nenhuma bunda está a salvo nesse jogo. Então, proteja sua bunda, crioulo, pois eu estou indo nela. Você sabe, eu sou um real nego malandro. Apenas me diga quem vai morrer hoje. ", message, to=chat_clean)
-        except Exception as err:
-            print(f"[Verity] Erro ao responder gatilho 'nego': {err}")
-
     # 4A-2. Gatilhos automaticos da tabela GATILHOS (palavra exata + cooldown de 30s por chat)
     if not is_from_me and not texto_lower.startswith(".") and texto_lower:
         agora_gatilho = time.time()
