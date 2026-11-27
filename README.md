@@ -14,6 +14,7 @@ Bot de WhatsApp em Python para criacao de figurinhas com som, download de videos
 - `.baixar` / `.download` / `.dl <link>`: baixa videos do TikTok, Instagram Reels, YouTube Shorts, etc. e envia no chat.
 - `.mp3` / `.audio <link ou video>`: baixa apenas o audio em MP3 (YouTube, SoundCloud, Spotify track ou video respondido).
 - `.lembrete` / `.remind <tempo> <mensagem>`: agenda um lembrete (ex: `10s`, `30m`, `2h`, `1d`) e envia quando vencer.
+- `.ia <pergunta>`: faz uma pergunta para a IA (Gemini) ou responde analisando uma mensagem citada.
 - `.ping`: responde com o tempo de resposta em milissegundos (ms).
 
 ### Administrador (exclusivos do dono)
@@ -39,6 +40,8 @@ Bot de WhatsApp em Python para criacao de figurinhas com som, download de videos
 - `.unsudo` / `.nosudo` / `.removersudo [numero]`: remove os superpoderes de `.sudo` do usuario (exclusivo do dono).
 - `.logs`: envia as ultimas 20 linhas do `bot.log` no privado do dono.
 - `.todos` / `.tagall <mensagem>`: envia uma mensagem em grupo marcando todos os participantes silenciosamente.
+- `.iastart [instrucao]`: ativa a resposta automatica da IA (Gemini) no chat ou grupo atual (exclusivo do dono).
+- `.iastop`: desativa a resposta automatica da IA no chat ou grupo atual (exclusivo do dono).
 - `.antidelete`: ativa o monitoramento de mensagens apagadas e editadas para grupos (mensagens de grupos sao limpas automaticamente do cache apos 12 horas).
 - `.stopantidelete`: desativa o monitoramento nos grupos.
 - `.ver` / `.view` / `.save`: resgata uma midia marcada para o privado do dono.

@@ -240,3 +240,32 @@ def remove_macaco(user_id: str) -> bool:
 def list_macaco() -> list:
     db = load_db()
     return db.get("macaco_users", [])
+
+# Carrega chats com IA automatica (.iastart) ativa
+def get_ia_chats() -> dict:
+    db = load_db()
+    chats = db.get("ia_chats", {})
+    return chats if isinstance(chats, dict) else {}
+
+# Ativa IA automatica em um chat
+def set_ia_chat(chat_id: str, instruction: str = ""):
+    with _db_lock:
+        db = _load_db_unlocked()
+        chats = db.get("ia_chats", {})
+        if not isinstance(chats, dict):
+            chats = {}
+        chats[chat_id] = instruction
+        db["ia_chats"] = chats
+        _save_db_unlocked(db)
+
+# Desativa IA automatica em um chat
+def remove_ia_chat(chat_id: str) -> bool:
+    with _db_lock:
+        db = _load_db_unlocked()
+        chats = db.get("ia_chats", {})
+        if isinstance(chats, dict) and chat_id in chats:
+            del chats[chat_id]
+            db["ia_chats"] = chats
+            _save_db_unlocked(db)
+            return True
+        return False
