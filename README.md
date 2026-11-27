@@ -30,6 +30,8 @@ Bot de WhatsApp em Python para criacao de figurinhas com som, download de videos
 - `.abrir` / `.open`: abre o grupo para todos os participantes enviarem mensagens (somente admins do grupo ou o dono).
 - `.link` / `.invitelink`: gera e envia o link de convite do grupo (somente admins do grupo ou o dono).
 - `.apagar` / `.del`: apaga a mensagem marcada para todos no grupo (somente admins do grupo ou o dono).
+- `.mute` / `.mutar [tempo]`: apaga silenciosamente as mensagens do usuario no grupo pelo tempo definido (padrao `5m`, somente admins reais ou o dono).
+- `.unmute` / `.desmutar`: remove o mute do usuario no grupo antes do tempo acabar.
 - `.sudo [numero]`: concede permissao a um usuario para usar comandos de admin de grupo (exclusivo do dono).
 - `.unsudo` / `.nosudo` / `.removersudo [numero]`: remove os superpoderes de `.sudo` do usuario (exclusivo do dono).
 - `.logs`: envia as ultimas 20 linhas do `bot.log` no privado do dono.

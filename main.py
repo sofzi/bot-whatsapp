@@ -225,6 +225,10 @@ message_cache = {}
 active_reminders = {}
 reminders_lock = threading.Lock()
 
+# Controle de usuarios mutados temporariamente por grupo
+muted_users = {}
+muted_lock = threading.Lock()
+
 # Controle do monitoramento em grupos (carregado do database.json para persistir)
 antidelete_grupos_global, antidelete_grupos_ativos = db.get_antidelete_config()
 
@@ -634,6 +638,26 @@ def on_message(c: NewClient, message: MessageEv):
         except Exception as err:
             print(f"[Macaco] Erro ao apagar mensagem de +{sender_number}: {err}")
         return
+
+    # Mute temporario: apaga silenciosamente as mensagens do usuario mutado no grupo
+    if is_group and not is_from_me:
+        chaves_mute = [f"{chat.User}:{sender_number}", f"{chat.User}:{sender.User}"]
+        agora_ts = time.time()
+        esta_mutado = False
+        with muted_lock:
+            for km in chaves_mute:
+                exp = muted_users.get(km)
+                if exp is not None:
+                    if agora_ts < exp:
+                        esta_mutado = True
+                        break
+                    muted_users.pop(km, None)
+        if esta_mutado:
+            try:
+                c.revoke_message(chat, JIDToNonAD(sender), msg_id)
+            except Exception as err:
+                print(f"[Mute] Erro ao apagar mensagem de +{sender_number}: {err}")
+            return
 
     # Lista de comandos exclusivos do dono (PT e EN)
     comandos_adm = (
@@ -1127,7 +1151,8 @@ def on_message(c: NewClient, message: MessageEv):
     comandos_grupo_adm = (
         ".ban", ".kick", ".add", ".adicionar", ".promover", ".promote",
         ".rebaixar", ".demote", ".fechar", ".close", ".abrir", ".open",
-        ".link", ".invitelink", ".apagar", ".del",
+        ".link", ".invitelink", ".apagar", ".del", ".mute", ".mutar",
+        ".unmute", ".desmutar",
     )
     if any(texto_lower == cmd or texto_lower.startswith(cmd + " ") for cmd in comandos_grupo_adm):
         if not is_group:
@@ -1271,6 +1296,43 @@ def on_message(c: NewClient, message: MessageEv):
                 c.reply_message("Nao foi possivel apagar a mensagem. Verifique se voce/bot e admin do grupo.", message, to=chat_clean)
             return
 
+        # .mute / .mutar [tempo] (apaga mensagens da pessoa silenciosamente pelo tempo informado, padrao 5m)
+        if any(texto_lower == cmd or texto_lower.startswith(cmd + " ") for cmd in [".mute", ".mutar"]):
+            if not alvo_jid or not alvo_num:
+                c.reply_message("Uso: responda a mensagem ou mencione @pessoa com .mute [tempo] (ex: .mute 10m)", message, to=chat_clean)
+                return
+            if alvo_eh_o_bot(c, chat, alvo_jid, alvo_num, message_cache, stanza_citada):
+                c.reply_message("Nao e possivel usar este comando contra o proprio bot.", message, to=chat_clean)
+                return
+            tempo_label = "5m"
+            segundos_mute = 300
+            for tok in texto_mensagem.split()[1:]:
+                if not tok.startswith("@"):
+                    seg = parse_tempo_segundos(tok)
+                    if seg:
+                        segundos_mute = min(seg, 7 * 86400)
+                        tempo_label = tok
+                        break
+            chave_mute = f"{chat.User}:{alvo_num}"
+            with muted_lock:
+                muted_users[chave_mute] = time.time() + segundos_mute
+            c.reply_message(f"Usuario +{alvo_num} mutado neste grupo por {tempo_label}.", message, to=chat_clean)
+            return
+
+        # .unmute / .desmutar
+        if any(texto_lower == cmd or texto_lower.startswith(cmd + " ") for cmd in [".unmute", ".desmutar"]):
+            if not alvo_num:
+                c.reply_message("Uso: responda a mensagem ou mencione @pessoa com .unmute", message, to=chat_clean)
+                return
+            chave_mute = f"{chat.User}:{alvo_num}"
+            with muted_lock:
+                removido = muted_users.pop(chave_mute, None) is not None
+            if removido:
+                c.reply_message(f"Mute removido de +{alvo_num}.", message, to=chat_clean)
+            else:
+                c.reply_message(f"Usuario +{alvo_num} nao estava mutado.", message, to=chat_clean)
+            return
+
     # 3. Comando .comandos / .ajuda / .help / .commands
     if texto_lower in [".comandos", ".ajuda", ".help", ".commands", ".menu"]:
         linhas = [
@@ -1302,6 +1364,8 @@ def on_message(c: NewClient, message: MessageEv):
                 "- .abrir / .open : abre o grupo para todos",
                 "- .link / .invitelink : envia o link de convite do grupo",
                 "- .apagar / .del : apaga a mensagem marcada para todos no grupo",
+                "- .mute / .mutar [tempo] : apaga mensagens do alvo silenciosamente (padrao 5m)",
+                "- .unmute / .desmutar : remove o mute do usuario no grupo",
                 "- .sudo [numero] : da permissao de usar comandos de adm de grupo",
                 "- .unsudo / .nosudo [numero] : remove superpoderes do usuario",
                 "- .logs : envia as ultimas 20 linhas do bot.log no seu privado",
