@@ -234,6 +234,15 @@ muted_lock = threading.Lock()
 group_msg_history = {}
 history_lock = threading.Lock()
 
+# Tabela de gatilhos automaticos por palavra exata (palavra -> resposta) com cooldown por chat
+GATILHOS = {
+    "como faz figurinha": "Envie ou responda uma foto/video com .fig (ou .fign sem recortar). Para figurinha com som, use .audiosticker",
+    "como fazer figurinha": "Envie ou responda uma foto/video com .fig (ou .fign sem recortar). Para figurinha com som, use .audiosticker",
+}
+GATILHOS_COOLDOWN_SEG = 30
+gatilhos_cooldown = {}
+gatilhos_lock = threading.Lock()
+
 # Controle do monitoramento em grupos (carregado do database.json para persistir)
 antidelete_grupos_global, antidelete_grupos_ativos = db.get_antidelete_config()
 
@@ -1452,6 +1461,23 @@ def on_message(c: NewClient, message: MessageEv):
             c.reply_message("Eu tenho vários contatos nas ruas, crioulo. Eu posso fazer o rato me dar o queijo. Sim, isso é real. Nenhuma bunda está a salvo nesse jogo. Então, proteja sua bunda, crioulo, pois eu estou indo nela. Você sabe, eu sou um real nego malandro. Apenas me diga quem vai morrer hoje. ", message, to=chat_clean)
         except Exception as err:
             print(f"[Verity] Erro ao responder gatilho 'nego': {err}")
+
+    # 4A-2. Gatilhos automaticos da tabela GATILHOS (palavra exata + cooldown de 30s por chat)
+    if not is_from_me and not texto_lower.startswith(".") and texto_lower:
+        agora_gatilho = time.time()
+        for palavra_g, resposta_g in GATILHOS.items():
+            if re.search(rf"\b{re.escape(palavra_g.lower())}\b", texto_lower):
+                chave_cd = (chat.User, palavra_g.lower())
+                with gatilhos_lock:
+                    ultimo = gatilhos_cooldown.get(chave_cd, 0)
+                    if agora_gatilho - ultimo < GATILHOS_COOLDOWN_SEG:
+                        break
+                    gatilhos_cooldown[chave_cd] = agora_gatilho
+                try:
+                    c.reply_message(resposta_g, message, to=chat_clean)
+                except Exception as err:
+                    print(f"[Gatilhos] Erro ao responder '{palavra_g}': {err}")
+                break
 
     # 4B. Comando .lembrete / .remind <tempo> <texto> (apenas dono ou .sudo, maximo 1 ativo por pessoa)
     if any(texto_lower == cmd or texto_lower.startswith(cmd + " ") for cmd in [".lembrete", ".remind"]):
