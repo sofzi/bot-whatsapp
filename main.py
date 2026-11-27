@@ -236,8 +236,6 @@ history_lock = threading.Lock()
 
 # Tabela de gatilhos automaticos por palavra exata (palavra -> resposta) com cooldown por chat
 GATILHOS = {
-    "como faz figurinha": "Envie ou responda uma foto/video com .fig (ou .fign sem recortar). Para figurinha com som, use .audiosticker",
-    "como fazer figurinha": "Envie ou responda uma foto/video com .fig (ou .fign sem recortar). Para figurinha com som, use .audiosticker",
 }
 GATILHOS_COOLDOWN_SEG = 30
 gatilhos_cooldown = {}
