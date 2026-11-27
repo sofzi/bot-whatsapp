@@ -1005,21 +1005,30 @@ def on_message(c: NewClient, message: MessageEv):
                 c.reply_message("Nao foi possivel marcar os membros do grupo.", message, to=chat_clean)
             return
 
-        # Comando .iastart [instrucao] (ativa resposta automatica da IA neste chat)
+        # Comando .iastart [@pessoa] [instrucao] (ativa resposta automatica da IA neste chat ou so para uma pessoa)
         if texto_lower == ".iastart" or texto_lower.startswith(".iastart "):
             if not obter_gemini_api_key():
                 c.reply_message("Defina GEMINI_API_KEY no arquivo .env antes de usar .iastart", message, to=chat_clean)
                 return
             partes = texto_mensagem.split(" ", 1)
             instrucao = partes[1].strip() if len(partes) > 1 else ""
+            alvo_ia = ""
+            if has_field(raw_msg, "extendedTextMessage") and has_field(raw_msg.extendedTextMessage, "contextInfo"):
+                ctx_ia = raw_msg.extendedTextMessage.contextInfo
+                if ctx_ia.participant:
+                    alvo_ia = ctx_ia.participant.split("@")[0].split(":")[0]
+                elif ctx_ia.mentionedJID:
+                    alvo_ia = ctx_ia.mentionedJID[0].split("@")[0].split(":")[0]
+            if alvo_ia and instrucao:
+                instrucao = re.sub(rf"@{re.escape(alvo_ia)}\b", "", instrucao).strip()
             with ia_lock:
-                ia_chats_ativos[chat.User] = instrucao
+                ia_chats_ativos[chat.User] = {"instruction": instrucao, "target": alvo_ia}
                 ia_chat_history[chat.User] = deque(maxlen=12)
-            db.set_ia_chat(chat.User, instrucao)
+            db.set_ia_chat(chat.User, instrucao, alvo_ia)
+            msg_ok = f"IA automatica ativada neste chat (somente para +{alvo_ia})." if alvo_ia else "IA automatica ativada neste chat."
             if instrucao:
-                c.reply_message(f"IA automatica ativada neste chat.\nInstrucao: {instrucao}", message, to=chat_clean)
-            else:
-                c.reply_message("IA automatica ativada neste chat.", message, to=chat_clean)
+                msg_ok += f"\nInstrucao: {instrucao}"
+            c.reply_message(msg_ok, message, to=chat_clean)
             return
 
         # Comando .iastop (desativa resposta automatica da IA neste chat)
@@ -1091,9 +1100,19 @@ def on_message(c: NewClient, message: MessageEv):
 
             linhas.append("\nIA automatica (.iastart) ativa em:")
             if ativos_copia:
-                for cid, instr in ativos_copia.items():
+                for cid, cfg in ativos_copia.items():
                     label = _resolver_nome_chat(cid)
-                    linhas.append(f"- {label}" + (f" | {instr}" if instr else ""))
+                    if isinstance(cfg, dict):
+                        instr = cfg.get("instruction", "")
+                        alvo = cfg.get("target", "")
+                    else:
+                        instr, alvo = str(cfg or ""), ""
+                    extras = []
+                    if alvo:
+                        extras.append(f"alvo: +{alvo}")
+                    if instr:
+                        extras.append(instr)
+                    linhas.append(f"- {label}" + (f" | {' | '.join(extras)}" if extras else ""))
             else:
                 linhas.append("- Nenhum chat")
 
@@ -1766,8 +1785,13 @@ def on_message(c: NewClient, message: MessageEv):
     if not is_from_me and not texto_lower.startswith(".") and texto_mensagem:
         with ia_lock:
             ia_ativo = chat.User in ia_chats_ativos
-            instrucao_chat = ia_chats_ativos.get(chat.User, "")
-        if ia_ativo:
+            cfg_ia = ia_chats_ativos.get(chat.User, {})
+        if isinstance(cfg_ia, dict):
+            instrucao_chat = cfg_ia.get("instruction", "")
+            alvo_ia = cfg_ia.get("target", "")
+        else:
+            instrucao_chat, alvo_ia = str(cfg_ia or ""), ""
+        if ia_ativo and (not alvo_ia or alvo_corresponde_ids(c, chat, alvo_ia, {sender_number, sender.User})):
             autor_ia = (msg_info.Pushname or "").strip() or f"+{sender_number}"
             with ia_lock:
                 agora_auto = time.time()

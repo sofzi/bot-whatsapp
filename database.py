@@ -241,20 +241,31 @@ def list_macaco() -> list:
     db = load_db()
     return db.get("macaco_users", [])
 
-# Carrega chats com IA automatica (.iastart) ativa
+# Carrega chats com IA automatica (.iastart) ativa (normalizado para {chat_id: {"instruction": ..., "target": ...}})
 def get_ia_chats() -> dict:
     db = load_db()
     chats = db.get("ia_chats", {})
-    return chats if isinstance(chats, dict) else {}
+    if not isinstance(chats, dict):
+        return {}
+    normalizado = {}
+    for cid, val in chats.items():
+        if isinstance(val, dict):
+            normalizado[cid] = {
+                "instruction": val.get("instruction", ""),
+                "target": val.get("target", ""),
+            }
+        else:
+            normalizado[cid] = {"instruction": str(val or ""), "target": ""}
+    return normalizado
 
-# Ativa IA automatica em um chat
-def set_ia_chat(chat_id: str, instruction: str = ""):
+# Ativa IA automatica em um chat (opcionalmente focada em um unico usuario alvo)
+def set_ia_chat(chat_id: str, instruction: str = "", target: str = ""):
     with _db_lock:
         db = _load_db_unlocked()
         chats = db.get("ia_chats", {})
         if not isinstance(chats, dict):
             chats = {}
-        chats[chat_id] = instruction
+        chats[chat_id] = {"instruction": instruction, "target": target}
         db["ia_chats"] = chats
         _save_db_unlocked(db)
 
