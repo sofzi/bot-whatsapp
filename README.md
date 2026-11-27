@@ -9,6 +9,7 @@ Bot de WhatsApp em Python para criacao de figurinhas com som, download de videos
 - `.audiosticker` / `.soundsticker` / `.figsom`: cria figurinha com som nativa a partir de um video ou link (respeita a duracao original ate 10s, preenchida em 512x512 sem bordas).
   - Todo usuario novo tem direito a 1 figurinha com som gratuita. Apos usar, precisa ser autorizado pelo adm com `.authorize`.
 - `.fig` / `.sticker`: cria figurinha normal de foto ou video enviado/respondido.
+- `.fign`: cria figurinha mantendo a proporcao original da foto ou video (sem recortar).
 - `.toimg` / `.parafoto`: converte uma figurinha respondida de volta em imagem (PNG) ou video (MP4).
 - `.baixar` / `.download` / `.dl <link>`: baixa videos do TikTok, Instagram Reels, YouTube Shorts, etc. e envia no chat.
 - `.lembrete` / `.remind <tempo> <mensagem>`: agenda um lembrete (ex: `10s`, `30m`, `2h`, `1d`) e envia quando vencer.

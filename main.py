@@ -1388,6 +1388,7 @@ def on_message(c: NewClient, message: MessageEv):
             "Comandos disponiveis:",
             "- .audiosticker / .soundsticker / .figsom : cria figurinha com som (video ou link, ate 10s)",
             "- .fig / .sticker : cria figurinha normal de foto ou video",
+            "- .fign : cria figurinha mantendo a proporcao original (sem recortar)",
             "- .toimg / .parafoto : converte figurinha respondida em foto ou video",
             "- .baixar / .download / .dl <link> : baixa video de TikTok, Reels, Shorts, etc.",
             "- .lembrete / .remind <tempo> <msg> : agenda um lembrete (ex: 30m, 2h, 10s)",
@@ -1580,11 +1581,13 @@ def on_message(c: NewClient, message: MessageEv):
                         pass
         return
 
-    # 6. Comando .fig / .sticker (figurinha estatica ou animada sem audio separado)
-    if any(texto_lower == cmd or texto_lower.startswith(cmd + " ") for cmd in [".fig", ".sticker"]):
+    # 6. Comando .fig / .sticker / .fign (figurinha estatica ou animada sem audio separado)
+    if any(texto_lower == cmd or texto_lower.startswith(cmd + " ") for cmd in [".fig", ".sticker", ".fign"]):
         if not autorizado:
             bloquear_nao_autorizado()
             return
+
+        recortar = not (texto_lower == ".fign" or texto_lower.startswith(".fign "))
 
         quoted_msg, _ = obter_mensagem_citada(raw_msg)
         media_target = None
@@ -1613,9 +1616,9 @@ def on_message(c: NewClient, message: MessageEv):
         try:
             c.download_any(media_target, input_path)
             if is_video:
-                ok = mp.convert_video_to_sticker(input_path, output_webp, max_duration=10)
+                ok = mp.convert_video_to_sticker(input_path, output_webp, max_duration=10, crop=recortar)
             else:
-                ok = mp.convert_image_to_sticker(input_path, output_webp)
+                ok = mp.convert_image_to_sticker(input_path, output_webp, crop=recortar)
 
             if ok:
                 nome_meta = f"+{owner_number}" if owner_number else "sticker"

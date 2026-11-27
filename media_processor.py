@@ -20,7 +20,7 @@ def get_media_duration(input_path: str, default: float = 5.0) -> float:
     return default
 
 # Converte video para figurinha animada webp respeitando duracao do video (maximo 10s e 500 KB)
-def convert_video_to_sticker(input_path: str, output_webp_path: str, max_duration: int = 10) -> bool:
+def convert_video_to_sticker(input_path: str, output_webp_path: str, max_duration: int = 10, crop: bool = True) -> bool:
     dur = min(float(max_duration), get_media_duration(input_path, default=float(max_duration)))
 
     # Escolhe o degrau inicial pela duracao para acertar na 1a tentativa sem perder tempo
@@ -40,10 +40,16 @@ def convert_video_to_sticker(input_path: str, output_webp_path: str, max_duratio
 
     try:
         for fps, q, detail in degraus:
-            vf = (
-                f"fps={fps},scale={detail}:{detail}:force_original_aspect_ratio=increase:flags=bilinear,"
-                f"crop={detail}:{detail},scale=512:512:flags=bilinear,setsar=1"
-            )
+            if crop:
+                vf = (
+                    f"fps={fps},scale={detail}:{detail}:force_original_aspect_ratio=increase:flags=bilinear,"
+                    f"crop={detail}:{detail},scale=512:512:flags=bilinear,setsar=1"
+                )
+            else:
+                vf = (
+                    f"fps={fps},scale={detail}:{detail}:force_original_aspect_ratio=decrease:flags=bilinear,"
+                    f"format=rgba,pad={detail}:{detail}:(ow-iw)/2:(oh-ih)/2:color=black@0.0,scale=512:512:flags=bilinear,setsar=1,format=yuva420p"
+                )
             cmd = [
                 FFMPEG_BIN,
                 "-y",
@@ -67,9 +73,19 @@ def convert_video_to_sticker(input_path: str, output_webp_path: str, max_duratio
         print(f"Erro ao converter video em sticker: {e}")
         return False
 
-# Converte imagem estatica para figurinha webp 512x512 preenchida sem bordas
-def convert_image_to_sticker(input_path: str, output_webp_path: str) -> bool:
+# Converte imagem estatica para figurinha webp 512x512 (preenchida com recorte ou mantendo proporcao original)
+def convert_image_to_sticker(input_path: str, output_webp_path: str, crop: bool = True) -> bool:
     try:
+        if not crop:
+            with Image.open(input_path) as img:
+                img_rgba = img.convert("RGBA")
+                img_rgba.thumbnail((512, 512), Image.Resampling.LANCZOS)
+                canvas = Image.new("RGBA", (512, 512), (0, 0, 0, 0))
+                offset = ((512 - img_rgba.width) // 2, (512 - img_rgba.height) // 2)
+                canvas.paste(img_rgba, offset, img_rgba)
+                canvas.save(output_webp_path, "WEBP", quality=90)
+            return os.path.exists(output_webp_path)
+
         cmd = [
             FFMPEG_BIN,
             "-y",
