@@ -1543,15 +1543,19 @@ def on_message(c: NewClient, message: MessageEv):
         output_audio = os.path.join(TEMP_DIR, f"audio_{msg_id}.ogg")
 
         try:
+            motivo_dl = "ok"
             if video_target:
                 c.download_any(video_target, input_video)
             else:
-                mp.download_social_video(url_alvo, input_video)
+                _, motivo_dl = mp.download_social_video(url_alvo, input_video)
 
             if not os.path.exists(input_video):
                 if credito_reservado:
                     db.refund_credit(credito_reservado)
-                c.reply_message("Nao foi possivel obter o video (ou excedeu 50MB/5min).", message, to=chat_clean)
+                if motivo_dl == "insuportado":
+                    c.reply_message("Insuportado (limite: 100MB e 10min).", message, to=chat_clean)
+                else:
+                    c.reply_message("Nao foi possivel obter o video.", message, to=chat_clean)
                 return
 
             sticker_ok = mp.convert_video_to_sticker(input_video, output_webp, max_duration=10)
@@ -1700,13 +1704,16 @@ def on_message(c: NewClient, message: MessageEv):
 
         out_video = os.path.join(TEMP_DIR, f"dl_{msg_id}.mp4")
         try:
-            ok = mp.download_social_video(url_alvo, out_video)
+            ok, motivo_dl = mp.download_social_video(url_alvo, out_video)
             if ok and os.path.exists(out_video):
                 c.send_video(chat_clean, out_video)
             else:
                 if credito_reservado:
                     db.refund_credit(credito_reservado)
-                c.reply_message("Nao foi possivel baixar o video (link invalido ou excedeu 50MB/5min).", message, to=chat_clean)
+                if motivo_dl == "insuportado":
+                    c.reply_message("Insuportado (limite: 100MB e 10min).", message, to=chat_clean)
+                else:
+                    c.reply_message("Nao foi possivel baixar o video desse link.", message, to=chat_clean)
         except Exception as e:
             print(f"Erro no comando .baixar: {e}")
             if credito_reservado:
@@ -1750,18 +1757,22 @@ def on_message(c: NewClient, message: MessageEv):
         in_video = os.path.join(TEMP_DIR, f"mp3in_{msg_id}.mp4")
         out_mp3 = os.path.join(TEMP_DIR, f"mp3out_{msg_id}.mp3")
         try:
+            motivo_dl = "ok"
             if video_target:
                 c.download_any(video_target, in_video)
                 ok = os.path.exists(in_video) and mp.extract_mp3_from_video(in_video, out_mp3)
             else:
-                ok = mp.download_social_audio(url_alvo, out_mp3)
+                ok, motivo_dl = mp.download_social_audio(url_alvo, out_mp3)
 
             if ok and os.path.exists(out_mp3):
                 c.send_audio(chat_clean, out_mp3)
             else:
                 if credito_reservado:
                     db.refund_credit(credito_reservado)
-                c.reply_message("Nao foi possivel obter o audio (link invalido/playlist ou excedeu 30MB/10min).", message, to=chat_clean)
+                if motivo_dl == "insuportado":
+                    c.reply_message("Insuportado (limite: 100MB e 10min).", message, to=chat_clean)
+                else:
+                    c.reply_message("Nao foi possivel obter o audio desse link.", message, to=chat_clean)
         except Exception as e:
             print(f"Erro no comando .mp3: {e}")
             if credito_reservado:

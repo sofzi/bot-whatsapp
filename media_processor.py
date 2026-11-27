@@ -185,8 +185,41 @@ def extract_audio(input_path: str, output_audio_path: str, max_duration: int = 1
         print(f"Erro ao extrair audio: {e}")
         return False, 0
 
-# Baixa video curto de redes sociais (TikTok, Reels, Shorts, etc.) com limite de tamanho e duracao
-def download_social_video(url: str, output_mp4_path: str, max_filesize_mb: int = 50, max_duration_sec: int = 300) -> bool:
+# Verifica tamanho/duracao antes de baixar e executa o download via yt_dlp
+def _ytdlp_baixar_com_limite(alvo: str, ydl_opts: dict, max_filesize_mb: int, max_duration_sec: int) -> str:
+    limite_bytes = max_filesize_mb * 1024 * 1024
+    try:
+        with yt_dlp.YoutubeDL(ydl_opts) as ydl:
+            info = ydl.extract_info(alvo, download=False)
+            if not info:
+                return "erro"
+            entry = info["entries"][0] if "entries" in info and info.get("entries") else info
+            if not entry:
+                return "erro"
+
+            dur = entry.get("duration") or 0
+            if dur and dur > max_duration_sec:
+                return "insuportado"
+
+            if entry.get("requested_formats"):
+                total_bytes = sum((f.get("filesize") or f.get("filesize_approx") or 0) for f in entry["requested_formats"])
+            else:
+                total_bytes = entry.get("filesize") or entry.get("filesize_approx") or 0
+
+            if total_bytes and total_bytes > limite_bytes:
+                return "insuportado"
+
+            ydl.download([alvo])
+            return "ok"
+    except Exception as e:
+        msg = str(e).lower()
+        if "larger than max-filesize" in msg or "does not pass filter" in msg:
+            return "insuportado"
+        print(f"Erro no yt_dlp: {e}")
+        return "erro"
+
+# Baixa video curto de redes sociais (TikTok, Reels, Shorts, etc.) com limite de 100MB e 10min
+def download_social_video(url: str, output_mp4_path: str, max_filesize_mb: int = 100, max_duration_sec: int = 600) -> tuple[bool, str]:
     try:
         if os.path.exists(output_mp4_path):
             os.remove(output_mp4_path)
@@ -204,13 +237,13 @@ def download_social_video(url: str, output_mp4_path: str, max_filesize_mb: int =
             "ffmpeg_location": FFMPEG_BIN,
             "merge_output_format": "mp4",
         }
-        with yt_dlp.YoutubeDL(ydl_opts) as ydl:
-            ydl.download([url])
-
-        return os.path.exists(output_mp4_path) and os.path.getsize(output_mp4_path) > 0
+        status = _ytdlp_baixar_com_limite(url, ydl_opts, max_filesize_mb, max_duration_sec)
+        if status == "ok" and os.path.exists(output_mp4_path) and os.path.getsize(output_mp4_path) > 0:
+            return True, "ok"
+        return False, status
     except Exception as e:
         print(f"Erro ao baixar video da URL: {e}")
-        return False
+        return False, "erro"
 
 # Extrai titulo/artista de um link do Spotify (oEmbed/meta) para buscar o audio equivalente
 def _resolver_busca_spotify(url: str) -> str | None:
@@ -245,8 +278,8 @@ def extract_mp3_from_video(input_video_path: str, output_mp3_path: str, max_dura
         print(f"Erro ao extrair MP3 do video: {e}")
         return False
 
-# Baixa somente o audio em MP3 de YouTube, SoundCloud ou busca equivalente de link do Spotify
-def download_social_audio(url: str, output_mp3_path: str, max_filesize_mb: int = 30, max_duration_sec: int = 600) -> bool:
+# Baixa somente o audio em MP3 de YouTube, SoundCloud ou busca equivalente de link do Spotify (limite 100MB / 10min)
+def download_social_audio(url: str, output_mp3_path: str, max_filesize_mb: int = 100, max_duration_sec: int = 600) -> tuple[bool, str]:
     try:
         if os.path.exists(output_mp3_path):
             os.remove(output_mp3_path)
@@ -254,10 +287,10 @@ def download_social_audio(url: str, output_mp3_path: str, max_filesize_mb: int =
         alvo = url
         if "open.spotify.com" in url.lower():
             if "/track/" not in url.lower():
-                return False
+                return False, "erro"
             nome_musica = _resolver_busca_spotify(url)
             if not nome_musica:
-                return False
+                return False, "erro"
             alvo = f"ytsearch1:{nome_musica}"
 
         base_no_ext = output_mp3_path[:-4] if output_mp3_path.lower().endswith(".mp3") else output_mp3_path
@@ -278,10 +311,10 @@ def download_social_audio(url: str, output_mp3_path: str, max_filesize_mb: int =
                 "preferredquality": "192",
             }],
         }
-        with yt_dlp.YoutubeDL(ydl_opts) as ydl:
-            ydl.download([alvo])
-
-        return os.path.exists(output_mp3_path) and os.path.getsize(output_mp3_path) > 0
+        status = _ytdlp_baixar_com_limite(alvo, ydl_opts, max_filesize_mb, max_duration_sec)
+        if status == "ok" and os.path.exists(output_mp3_path) and os.path.getsize(output_mp3_path) > 0:
+            return True, "ok"
+        return False, status
     except Exception as e:
         print(f"Erro ao baixar audio da URL: {e}")
-        return False
+        return False, "erro"
