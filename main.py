@@ -1861,9 +1861,9 @@ def on_message(c: NewClient, message: MessageEv):
 
     def bloquear_nao_autorizado():
         if is_group:
-            c.reply_message("sai dai bixo", message, to=chat_clean)
+            c.reply_message("faz o pix", message, to=chat_clean)
         else:
-            c.reply_message("aguarde o adm", message, to=chat_clean)
+            c.reply_message("faz o pix", message, to=chat_clean)
 
     def descontar_credito_usuario():
         if not is_from_me:
@@ -1893,7 +1893,7 @@ def on_message(c: NewClient, message: MessageEv):
                     usando_trial = True
                 else:
                     c.reply_message(
-                        "sai dai, ja gastou seu credito",
+                        "faz o pix",
                         message,
                         to=chat_clean,
                     )
