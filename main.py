@@ -293,39 +293,47 @@ def chamar_gemini(contents: list, custom_instruction: str = "") -> tuple[bool, s
             "temperature": 0.7,
         },
     }
-    url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key={api_key}"
-    req = urllib.request.Request(
-        url,
-        data=json.dumps(payload).encode("utf-8"),
-        headers={"Content-Type": "application/json"},
-        method="POST",
-    )
-    try:
-        with urllib.request.urlopen(req, timeout=20) as resp:
-            data = json.loads(resp.read().decode("utf-8", errors="ignore"))
-        candidates = data.get("candidates") or []
-        if not candidates:
-            return False, "Nao consegui gerar uma resposta para isso."
-        parts = (candidates[0].get("content") or {}).get("parts") or []
-        texto = "".join(p.get("text", "") for p in parts).strip()
-        if not texto:
-            return False, "Nao consegui gerar uma resposta para isso."
-        if len(texto) > 1500:
-            texto = texto[:1497] + "..."
-        return True, texto
-    except urllib.error.HTTPError as e:
-        err_body = ""
+    modelos = ["gemini-3.8-flash", "gemini-3.5-flash-lite", "gemini-flash-lite-latest"]
+    ultimo_codigo = 0
+    for modelo in modelos:
+        url = f"https://generativelanguage.googleapis.com/v1beta/models/{modelo}:generateContent?key={api_key}"
+        req = urllib.request.Request(
+            url,
+            data=json.dumps(payload).encode("utf-8"),
+            headers={"Content-Type": "application/json"},
+            method="POST",
+        )
         try:
-            err_body = e.read().decode("utf-8", errors="ignore")[:200]
-        except Exception:
-            pass
-        print(f"[Gemini] HTTP {e.code}: {err_body}")
-        if e.code == 429:
-            return False, "Limite da IA atingido no momento, tente novamente em alguns segundos."
-        return False, "Erro ao consultar a IA no momento."
-    except Exception as e:
-        print(f"[Gemini] Erro: {e}")
-        return False, "Erro ao consultar a IA no momento."
+            with urllib.request.urlopen(req, timeout=30) as resp:
+                data = json.loads(resp.read().decode("utf-8", errors="ignore"))
+            candidates = data.get("candidates") or []
+            if not candidates:
+                return False, "Nao consegui gerar uma resposta para isso."
+            parts = (candidates[0].get("content") or {}).get("parts") or []
+            texto = "".join(p.get("text", "") for p in parts).strip()
+            if not texto:
+                return False, "Nao consegui gerar uma resposta para isso."
+            if len(texto) > 1500:
+                texto = texto[:1497] + "..."
+            return True, texto
+        except urllib.error.HTTPError as e:
+            ultimo_codigo = e.code
+            err_body = ""
+            try:
+                err_body = e.read().decode("utf-8", errors="ignore")[:200]
+            except Exception:
+                pass
+            print(f"[Gemini:{modelo}] HTTP {e.code}: {err_body}")
+            if e.code in (404, 429, 500, 503):
+                continue
+            return False, "Erro ao consultar a IA no momento."
+        except Exception as e:
+            print(f"[Gemini:{modelo}] Erro: {e}")
+            continue
+
+    if ultimo_codigo == 429:
+        return False, "Limite da IA atingido no momento, tente novamente em alguns segundos."
+    return False, "Erro ao consultar a IA no momento."
 
 # Controle do monitoramento em grupos (carregado do database.json para persistir)
 antidelete_grupos_global, antidelete_grupos_ativos = db.get_antidelete_config()
