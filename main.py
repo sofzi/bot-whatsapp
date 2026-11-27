@@ -791,6 +791,7 @@ def on_message(c: NewClient, message: MessageEv):
         ".tagall",
         ".iastart",
         ".iastop",
+        ".iapersonalidade",
         ".encerrar",
         ".desligar",
         ".stop",
@@ -1026,6 +1027,25 @@ def on_message(c: NewClient, message: MessageEv):
                 c.reply_message("IA automatica desativada neste chat.", message, to=chat_clean)
             else:
                 c.reply_message("IA automatica nao estava ativa neste chat.", message, to=chat_clean)
+            return
+
+        # Comando .iapersonalidade [texto|reset] (muda o tom padrao da IA pelo WhatsApp)
+        if texto_lower == ".iapersonalidade" or texto_lower.startswith(".iapersonalidade "):
+            partes = texto_mensagem.split(" ", 1)
+            nova_pers = partes[1].strip() if len(partes) > 1 else ""
+            if not nova_pers:
+                atual = db.get_ia_personality()
+                if atual:
+                    c.reply_message(f"Personalidade atual da IA:\n{atual}\n\nUse '.iapersonalidade reset' para voltar ao normal.", message, to=chat_clean)
+                else:
+                    c.reply_message("IA esta no modo padrao.\nUso: .iapersonalidade <jeito de responder>", message, to=chat_clean)
+                return
+            if nova_pers.lower() in ["reset", "padrao", "normal", "limpar"]:
+                db.set_ia_personality("")
+                c.reply_message("Personalidade da IA voltou ao modo padrao.", message, to=chat_clean)
+            else:
+                db.set_ia_personality(nova_pers)
+                c.reply_message(f"Personalidade da IA atualizada para:\n{nova_pers}", message, to=chat_clean)
             return
 
         # Comando .sudo (da superpoderes de admin de grupo ao usuario)
@@ -1557,6 +1577,7 @@ def on_message(c: NewClient, message: MessageEv):
                 "- .todos / .tagall <msg> : marca todos no grupo silenciosamente",
                 "- .iastart [instrucao] : ativa resposta automatica da IA neste chat",
                 "- .iastop : desativa resposta automatica da IA neste chat",
+                "- .iapersonalidade <texto|reset> : define o jeito da IA responder",
                 "- .antidelete : ativa anti-delete e anti-edit em grupos",
                 "- .stopantidelete : desativa anti-delete e anti-edit em grupos",
                 "- .ver / .view / .save : resgata midia marcada para o seu privado",
@@ -1673,7 +1694,10 @@ def on_message(c: NewClient, message: MessageEv):
         else:
             prompt_final = pergunta[:600]
 
-        _, resp_ia = chamar_gemini([{"role": "user", "parts": [{"text": prompt_final}]}])
+        _, resp_ia = chamar_gemini(
+            [{"role": "user", "parts": [{"text": prompt_final}]}],
+            custom_instruction=db.get_ia_personality(),
+        )
         c.reply_message(resp_ia, message, to=chat_clean)
         return
 
@@ -1698,7 +1722,8 @@ def on_message(c: NewClient, message: MessageEv):
                     ia_auto_cooldown[chat.User] = agora_auto
                 hist_copia = list(ia_chat_history[chat.User])
             if pode_responder:
-                ok_ia, resp_auto = chamar_gemini(hist_copia, custom_instruction=instrucao_chat)
+                instr_final = instrucao_chat or db.get_ia_personality()
+                ok_ia, resp_auto = chamar_gemini(hist_copia, custom_instruction=instr_final)
                 if ok_ia:
                     with ia_lock:
                         if chat.User in ia_chat_history:

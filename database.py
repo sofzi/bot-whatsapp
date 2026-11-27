@@ -269,3 +269,15 @@ def remove_ia_chat(chat_id: str) -> bool:
             _save_db_unlocked(db)
             return True
         return False
+
+# Le a personalidade padrao configurada para a IA
+def get_ia_personality() -> str:
+    db = load_db()
+    return (db.get("ia_personality") or "").strip()
+
+# Salva a personalidade padrao da IA (vazio = padrao normal)
+def set_ia_personality(personality: str):
+    with _db_lock:
+        db = _load_db_unlocked()
+        db["ia_personality"] = (personality or "").strip()
+        _save_db_unlocked(db)

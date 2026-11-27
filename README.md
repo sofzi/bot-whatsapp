@@ -42,6 +42,7 @@ Bot de WhatsApp em Python para criacao de figurinhas com som, download de videos
 - `.todos` / `.tagall <mensagem>`: envia uma mensagem em grupo marcando todos os participantes silenciosamente.
 - `.iastart [instrucao]`: ativa a resposta automatica da IA (Gemini) no chat ou grupo atual (exclusivo do dono).
 - `.iastop`: desativa a resposta automatica da IA no chat ou grupo atual (exclusivo do dono).
+- `.iapersonalidade <texto|reset>`: define ou reseta o jeito padrao da IA responder (exclusivo do dono).
 - `.antidelete`: ativa o monitoramento de mensagens apagadas e editadas para grupos (mensagens de grupos sao limpas automaticamente do cache apos 12 horas).
 - `.stopantidelete`: desativa o monitoramento nos grupos.
 - `.ver` / `.view` / `.save`: resgata uma midia marcada para o privado do dono.
