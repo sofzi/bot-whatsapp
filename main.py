@@ -294,7 +294,7 @@ def chamar_gemini(contents: list, custom_instruction: str = "") -> tuple[bool, s
             "temperature": 0.7,
         },
     }
-    modelos = ["gemini-3.8-flash", "gemini-3.5-flash-lite", "gemini-flash-lite-latest"]
+    modelos = ["gemini-3.5-flash-lite", "gemini-flash-lite-latest", "gemini-3.8-flash"]
     ultimo_codigo = 0
     for modelo in modelos:
         url = f"https://generativelanguage.googleapis.com/v1beta/models/{modelo}:generateContent?key={api_key}"
@@ -305,7 +305,7 @@ def chamar_gemini(contents: list, custom_instruction: str = "") -> tuple[bool, s
             method="POST",
         )
         try:
-            with urllib.request.urlopen(req, timeout=30) as resp:
+            with urllib.request.urlopen(req, timeout=12) as resp:
                 data = json.loads(resp.read().decode("utf-8", errors="ignore"))
             candidates = data.get("candidates") or []
             if not candidates:
