@@ -244,8 +244,9 @@ GATILHOS_COOLDOWN_SEG = 30
 gatilhos_cooldown = {}
 gatilhos_lock = threading.Lock()
 
-# Controle anti-spam de comandos (>3x do mesmo comando em 3s bloqueia automaticamente)
+# Controle anti-spam de comandos (>3x mesmo comando em 6s ou >5x comandos quaisquer em 6s)
 spam_cmd_history = {}
+spam_global_history = {}
 spam_lock = threading.Lock()
 
 # Controle da IA (Gemini): chats ativos com .iastart, grupos liberados pro .ia, historico e cooldowns
@@ -826,10 +827,11 @@ def on_message(c: NewClient, message: MessageEv):
     if not is_from_me and texto_lower.startswith(".") and any(db.is_blocked(k) for k in chaves_remetente):
         return
 
-    # Anti-spam: se enviar o mesmo comando mais de 3x em 3 segundos, bloqueia automaticamente
+    # Anti-spam: >3x do mesmo comando em 6s OU >5x comandos quaisquer em 6s bloqueia automaticamente
     if not is_from_me and texto_lower.startswith("."):
         cmd_base = texto_lower.split()[0]
-        chave_spam = (sender_number or sender.User, cmd_base)
+        user_spam_id = sender_number or sender.User
+        chave_spam = (user_spam_id, cmd_base)
         agora_spam = time.time()
         bloqueou_agora = False
         with spam_lock:
@@ -837,17 +839,27 @@ def on_message(c: NewClient, message: MessageEv):
             if hist is None:
                 hist = deque()
                 spam_cmd_history[chave_spam] = hist
-            while hist and (agora_spam - hist[0]) > 3.0:
+            while hist and (agora_spam - hist[0]) > 6.0:
                 hist.popleft()
             hist.append(agora_spam)
-            if len(hist) > 3:
+
+            hist_global = spam_global_history.get(user_spam_id)
+            if hist_global is None:
+                hist_global = deque()
+                spam_global_history[user_spam_id] = hist_global
+            while hist_global and (agora_spam - hist_global[0]) > 6.0:
+                hist_global.popleft()
+            hist_global.append(agora_spam)
+
+            if len(hist) > 3 or len(hist_global) > 5:
                 bloqueou_agora = True
                 spam_cmd_history.pop(chave_spam, None)
+                spam_global_history.pop(user_spam_id, None)
         if bloqueou_agora:
             for k_blk in set(chaves_remetente):
                 if k_blk:
                     db.block_user(k_blk)
-            print(f"[Anti-Spam] Usuario +{sender_number} bloqueado automaticamente por spam de {cmd_base}")
+            print(f"[Anti-Spam] Usuario +{sender_number} bloqueado automaticamente por spam ({cmd_base})")
             try:
                 c.reply_message("Voce foi bloqueado automaticamente por spam de comandos.", message, to=chat_clean)
             except Exception:
@@ -1365,6 +1377,14 @@ def on_message(c: NewClient, message: MessageEv):
                 c.reply_message(f"Usuario +{principal} removido.", message, to=chat_clean)
             else:
                 c.reply_message("Uso: responda a mensagem com .remover ou digite: .remover <numero>", message, to=chat_clean)
+            return
+
+    # Se .iastart estiver focado em uma unica pessoa neste grupo, ignora todos os outros (exceto o dono)
+    if is_group and not is_from_me:
+        with ia_lock:
+            cfg_foco = ia_chats_ativos.get(chat.User)
+        alvo_foco = cfg_foco.get("target", "") if isinstance(cfg_foco, dict) else ""
+        if alvo_foco and not alvo_corresponde_ids(c, chat, alvo_foco, {sender_number, sender.User}):
             return
 
     # Comando secreto: .macaco, .desmacaco / .unmacaco e .macacos / .listamacaco (apenas dono e admins reais, silencioso para demais)
