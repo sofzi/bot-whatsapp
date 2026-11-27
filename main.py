@@ -1919,19 +1919,28 @@ def on_message(c: NewClient, message: MessageEv):
 
         quoted_msg, _ = obter_mensagem_citada(raw_msg)
         video_target = None
+        sticker_audio_target = None
         url_alvo = extrair_url(texto_mensagem)
 
         if has_field(raw_msg, "videoMessage"):
             video_target = raw_msg
         elif quoted_msg and has_field(quoted_msg, "videoMessage"):
             video_target = quoted_msg
+        elif quoted_msg and has_field(quoted_msg, "stickerMessage"):
+            if has_field(quoted_msg.stickerMessage, "audioMessage"):
+                sticker_audio_target = quoted_msg
+            else:
+                if credito_reservado:
+                    db.refund_credit(credito_reservado)
+                c.reply_message("Essa figurinha nao tem som. Para figurinha normal use .fig", message, to=chat_clean)
+                return
         elif not url_alvo and quoted_msg:
             url_alvo = extrair_url(extract_text(quoted_msg))
 
-        if not video_target and not url_alvo:
+        if not video_target and not sticker_audio_target and not url_alvo:
             if credito_reservado:
                 db.refund_credit(credito_reservado)
-            c.reply_message("Envie um video, responda a um video ou cole um link junto com .audiosticker", message, to=chat_clean)
+            c.reply_message("Envie um video, responda a um video/figurinha com som ou cole um link junto com .figsom", message, to=chat_clean)
             return
 
         input_video = os.path.join(TEMP_DIR, f"input_{msg_id}.mp4")
@@ -1939,6 +1948,19 @@ def on_message(c: NewClient, message: MessageEv):
         output_audio = os.path.join(TEMP_DIR, f"audio_{msg_id}.ogg")
 
         try:
+            if sticker_audio_target:
+                c.download_any(sticker_audio_target, output_webp)
+                audio_wrapper = wa_pb.Message(audioMessage=sticker_audio_target.stickerMessage.audioMessage)
+                c.download_any(audio_wrapper, output_audio)
+                audio_dur = max(1, int(getattr(sticker_audio_target.stickerMessage.audioMessage, "seconds", 5) or 5))
+                if os.path.exists(output_webp) and os.path.exists(output_audio):
+                    enviar_figurinha_sonora_nativa(c, chat_clean, output_webp, output_audio, audio_dur, quoted=message)
+                else:
+                    if credito_reservado:
+                        db.refund_credit(credito_reservado)
+                    c.reply_message("Nao foi possivel baixar a figurinha com som.", message, to=chat_clean)
+                return
+
             motivo_dl = "ok"
             if video_target:
                 c.download_any(video_target, input_video)
