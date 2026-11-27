@@ -1431,7 +1431,6 @@ def on_message(c: NewClient, message: MessageEv):
         eh_sudo_apenas = (not eh_admin_real) and db.is_sudo(chaves_sudo)
 
         if not eh_admin_real and not eh_sudo_apenas:
-            c.reply_message("sai dai bixo, so adm do grupo pode usar isso", message, to=chat_clean)
             return
 
         eh_cmd_add_ban = any(
@@ -1734,7 +1733,8 @@ def on_message(c: NewClient, message: MessageEv):
     # 4B. Comando .lembrete / .remind <tempo> <texto> (apenas dono ou .sudo, maximo 1 ativo por pessoa)
     if any(texto_lower == cmd or texto_lower.startswith(cmd + " ") for cmd in [".lembrete", ".remind"]):
         if not (is_from_me or db.is_sudo([sender_number, sender.User])):
-            c.reply_message("sai dai bixo, so quem tem .sudo pode usar isso", message, to=chat_clean)
+            if not is_group:
+                c.reply_message("sai dai bixo, so quem tem .sudo pode usar isso", message, to=chat_clean)
             return
 
         partes = texto_mensagem.split(None, 2)
@@ -1778,7 +1778,6 @@ def on_message(c: NewClient, message: MessageEv):
             with ia_lock:
                 grupo_liberado_ia = chat.User in ia_grupos_liberados
             if not grupo_liberado_ia:
-                c.reply_message("sai dai maluco", message, to=chat_clean)
                 return
 
         if not is_from_me:
