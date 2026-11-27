@@ -1860,9 +1860,7 @@ def on_message(c: NewClient, message: MessageEv):
     autorizado = is_from_me or any(db.is_authorized(k) for k in chaves_usuario)
 
     def bloquear_nao_autorizado():
-        if is_group:
-            c.reply_message("faz o pix", message, to=chat_clean)
-        else:
+        if not is_group:
             c.reply_message("faz o pix", message, to=chat_clean)
 
     def descontar_credito_usuario():
@@ -1892,11 +1890,12 @@ def on_message(c: NewClient, message: MessageEv):
                 if db.try_reserve_trial(chaves_usuario):
                     usando_trial = True
                 else:
-                    c.reply_message(
-                        "faz o pix",
-                        message,
-                        to=chat_clean,
-                    )
+                    if not is_group:
+                        c.reply_message(
+                            "faz o pix",
+                            message,
+                            to=chat_clean,
+                        )
                     return
 
         quoted_msg, _ = obter_mensagem_citada(raw_msg)
