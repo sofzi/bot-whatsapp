@@ -1391,6 +1391,7 @@ def on_message(c: NewClient, message: MessageEv):
             "- .fign : cria figurinha mantendo a proporcao original (sem recortar)",
             "- .toimg / .parafoto : converte figurinha respondida em foto ou video",
             "- .baixar / .download / .dl <link> : baixa video de TikTok, Reels, Shorts, etc.",
+            "- .mp3 / .audio <link ou video> : baixa audio MP3 (YouTube, SoundCloud, Spotify)",
             "- .lembrete / .remind <tempo> <msg> : agenda um lembrete (ex: 30m, 2h, 10s)",
             "- .ping : mostra o tempo de resposta em ms",
             "- .comandos / .help : lista os comandos",
@@ -1713,6 +1714,61 @@ def on_message(c: NewClient, message: MessageEv):
             c.reply_message("Erro ao baixar o video.", message, to=chat_clean)
         finally:
             for temp_file in glob.glob(os.path.join(TEMP_DIR, f"dl_{msg_id}*")):
+                if os.path.exists(temp_file):
+                    try:
+                        os.remove(temp_file)
+                    except Exception:
+                        pass
+        return
+
+    # 8B. Comando .mp3 / .audio <link ou video> (YouTube, SoundCloud, Spotify ou video respondido)
+    if any(texto_lower == cmd or texto_lower.startswith(cmd + " ") for cmd in [".mp3", ".audio"]):
+        credito_reservado = None
+        if not is_from_me:
+            credito_reservado = db.try_reserve_credit(chaves_usuario)
+            if not credito_reservado:
+                bloquear_nao_autorizado()
+                return
+
+        quoted_msg, _ = obter_mensagem_citada(raw_msg)
+        video_target = None
+        url_alvo = extrair_url(texto_mensagem)
+
+        if has_field(raw_msg, "videoMessage"):
+            video_target = raw_msg
+        elif quoted_msg and has_field(quoted_msg, "videoMessage"):
+            video_target = quoted_msg
+        elif not url_alvo and quoted_msg:
+            url_alvo = extrair_url(extract_text(quoted_msg))
+
+        if not video_target and not url_alvo:
+            if credito_reservado:
+                db.refund_credit(credito_reservado)
+            c.reply_message("Uso: .mp3 <link do YouTube/SoundCloud/Spotify> ou responda a um video com .mp3", message, to=chat_clean)
+            return
+
+        in_video = os.path.join(TEMP_DIR, f"mp3in_{msg_id}.mp4")
+        out_mp3 = os.path.join(TEMP_DIR, f"mp3out_{msg_id}.mp3")
+        try:
+            if video_target:
+                c.download_any(video_target, in_video)
+                ok = os.path.exists(in_video) and mp.extract_mp3_from_video(in_video, out_mp3)
+            else:
+                ok = mp.download_social_audio(url_alvo, out_mp3)
+
+            if ok and os.path.exists(out_mp3):
+                c.send_audio(chat_clean, out_mp3)
+            else:
+                if credito_reservado:
+                    db.refund_credit(credito_reservado)
+                c.reply_message("Nao foi possivel obter o audio (link invalido/playlist ou excedeu 30MB/10min).", message, to=chat_clean)
+        except Exception as e:
+            print(f"Erro no comando .mp3: {e}")
+            if credito_reservado:
+                db.refund_credit(credito_reservado)
+            c.reply_message("Erro ao baixar/converter o audio.", message, to=chat_clean)
+        finally:
+            for temp_file in glob.glob(os.path.join(TEMP_DIR, f"mp3*_{msg_id}*")):
                 if os.path.exists(temp_file):
                     try:
                         os.remove(temp_file)

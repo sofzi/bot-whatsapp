@@ -1,5 +1,8 @@
 import os
+import json
 import subprocess
+import urllib.parse
+import urllib.request
 import imageio_ffmpeg
 from PIL import Image
 import yt_dlp
@@ -207,4 +210,78 @@ def download_social_video(url: str, output_mp4_path: str, max_filesize_mb: int =
         return os.path.exists(output_mp4_path) and os.path.getsize(output_mp4_path) > 0
     except Exception as e:
         print(f"Erro ao baixar video da URL: {e}")
+        return False
+
+# Extrai titulo/artista de um link do Spotify (oEmbed/meta) para buscar o audio equivalente
+def _resolver_busca_spotify(url: str) -> str | None:
+    try:
+        oembed_url = "https://open.spotify.com/oembed?url=" + urllib.parse.quote(url, safe="")
+        req = urllib.request.Request(oembed_url, headers={"User-Agent": "Mozilla/5.0"})
+        with urllib.request.urlopen(req, timeout=10) as resp:
+            data = json.loads(resp.read().decode("utf-8", errors="ignore"))
+        titulo = (data.get("title") or "").strip()
+        if titulo:
+            return titulo
+    except Exception:
+        pass
+    return None
+
+# Extrai audio MP3 de um arquivo de video local via FFmpeg
+def extract_mp3_from_video(input_video_path: str, output_mp3_path: str, max_duration_sec: int = 600) -> bool:
+    try:
+        cmd = [
+            FFMPEG_BIN,
+            "-y",
+            "-t", str(max_duration_sec),
+            "-i", input_video_path,
+            "-vn",
+            "-c:a", "libmp3lame",
+            "-b:a", "192k",
+            output_mp3_path,
+        ]
+        res = subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+        return res.returncode == 0 and os.path.exists(output_mp3_path) and os.path.getsize(output_mp3_path) > 0
+    except Exception as e:
+        print(f"Erro ao extrair MP3 do video: {e}")
+        return False
+
+# Baixa somente o audio em MP3 de YouTube, SoundCloud ou busca equivalente de link do Spotify
+def download_social_audio(url: str, output_mp3_path: str, max_filesize_mb: int = 30, max_duration_sec: int = 600) -> bool:
+    try:
+        if os.path.exists(output_mp3_path):
+            os.remove(output_mp3_path)
+
+        alvo = url
+        if "open.spotify.com" in url.lower():
+            if "/track/" not in url.lower():
+                return False
+            nome_musica = _resolver_busca_spotify(url)
+            if not nome_musica:
+                return False
+            alvo = f"ytsearch1:{nome_musica}"
+
+        base_no_ext = output_mp3_path[:-4] if output_mp3_path.lower().endswith(".mp3") else output_mp3_path
+        ydl_opts = {
+            "format": "bestaudio/best",
+            "outtmpl": base_no_ext + ".%(ext)s",
+            "noplaylist": True,
+            "quiet": True,
+            "no_warnings": True,
+            "nocheckcertificate": True,
+            "socket_timeout": 20,
+            "max_filesize": max_filesize_mb * 1024 * 1024,
+            "match_filter": yt_dlp.utils.match_filter_func(f"duration <= {max_duration_sec}"),
+            "ffmpeg_location": FFMPEG_BIN,
+            "postprocessors": [{
+                "key": "FFmpegExtractAudio",
+                "preferredcodec": "mp3",
+                "preferredquality": "192",
+            }],
+        }
+        with yt_dlp.YoutubeDL(ydl_opts) as ydl:
+            ydl.download([alvo])
+
+        return os.path.exists(output_mp3_path) and os.path.getsize(output_mp3_path) > 0
+    except Exception as e:
+        print(f"Erro ao baixar audio da URL: {e}")
         return False

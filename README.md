@@ -12,6 +12,7 @@ Bot de WhatsApp em Python para criacao de figurinhas com som, download de videos
 - `.fign`: cria figurinha mantendo a proporcao original da foto ou video (sem recortar).
 - `.toimg` / `.parafoto`: converte uma figurinha respondida de volta em imagem (PNG) ou video (MP4).
 - `.baixar` / `.download` / `.dl <link>`: baixa videos do TikTok, Instagram Reels, YouTube Shorts, etc. e envia no chat.
+- `.mp3` / `.audio <link ou video>`: baixa apenas o audio em MP3 (YouTube, SoundCloud, Spotify track ou video respondido).
 - `.lembrete` / `.remind <tempo> <mensagem>`: agenda um lembrete (ex: `10s`, `30m`, `2h`, `1d`) e envia quando vencer.
 - `.ping`: responde com o tempo de resposta em milissegundos (ms).
 
