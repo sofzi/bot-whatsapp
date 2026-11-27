@@ -6,6 +6,7 @@ import glob
 import shutil
 import subprocess
 import threading
+from collections import deque
 from datetime import datetime
 
 # Codigo de saida especial para indicar reinicializacao mantendo a sessao
@@ -228,6 +229,10 @@ reminders_lock = threading.Lock()
 # Controle de usuarios mutados temporariamente por grupo
 muted_users = {}
 muted_lock = threading.Lock()
+
+# Historico leve de IDs de mensagens por grupo (para comando .clear)
+group_msg_history = {}
+history_lock = threading.Lock()
 
 # Controle do monitoramento em grupos (carregado do database.json para persistir)
 antidelete_grupos_global, antidelete_grupos_ativos = db.get_antidelete_config()
@@ -1152,7 +1157,7 @@ def on_message(c: NewClient, message: MessageEv):
         ".ban", ".kick", ".add", ".adicionar", ".promover", ".promote",
         ".rebaixar", ".demote", ".fechar", ".close", ".abrir", ".open",
         ".link", ".invitelink", ".apagar", ".del", ".mute", ".mutar",
-        ".unmute", ".desmutar",
+        ".unmute", ".desmutar", ".clear", ".limparmsgs",
     )
     if any(texto_lower == cmd or texto_lower.startswith(cmd + " ") for cmd in comandos_grupo_adm):
         if not is_group:
@@ -1333,6 +1338,50 @@ def on_message(c: NewClient, message: MessageEv):
                 c.reply_message(f"Usuario +{alvo_num} nao estava mutado.", message, to=chat_clean)
             return
 
+        # .clear / .limparmsgs (apaga todas as mensagens recentes da pessoa no grupo que o bot viu)
+        if any(texto_lower == cmd or texto_lower.startswith(cmd + " ") for cmd in [".clear", ".limparmsgs"]):
+            if not alvo_jid or not alvo_num:
+                c.reply_message("Uso: responda a mensagem ou mencione @pessoa com .clear", message, to=chat_clean)
+                return
+            if alvo_eh_o_bot(c, chat, alvo_jid, alvo_num, message_cache, stanza_citada):
+                c.reply_message("Nao e possivel usar este comando contra o proprio bot.", message, to=chat_clean)
+                return
+
+            with history_lock:
+                historico = list(group_msg_history.get(chat.User, []))
+
+            para_apagar = []
+            for item in reversed(historico):
+                mid, s_jid, s_num, s_usr = item
+                if alvo_num in {s_num, s_usr} or alvo_corresponde_ids(c, chat, alvo_num, {s_num, s_usr}):
+                    para_apagar.append((mid, s_jid))
+
+            if not para_apagar:
+                c.reply_message(f"Nenhuma mensagem recente de +{alvo_num} encontrada no cache deste grupo.", message, to=chat_clean)
+                return
+
+            apagadas = 0
+            ids_apagados = set()
+            for mid, s_jid in para_apagar:
+                try:
+                    c.revoke_message(chat, s_jid, mid)
+                    apagadas += 1
+                    ids_apagados.add(mid)
+                    time.sleep(0.15)
+                except Exception as err:
+                    print(f"[Clear] Erro ao apagar mensagem {mid}: {err}")
+
+            if ids_apagados:
+                with history_lock:
+                    if chat.User in group_msg_history:
+                        group_msg_history[chat.User] = deque(
+                            [x for x in group_msg_history[chat.User] if x[0] not in ids_apagados],
+                            maxlen=500,
+                        )
+
+            c.reply_message(f"{apagadas} mensagem(ns) de +{alvo_num} apagada(s).", message, to=chat_clean)
+            return
+
     # 3. Comando .comandos / .ajuda / .help / .commands
     if texto_lower in [".comandos", ".ajuda", ".help", ".commands", ".menu"]:
         linhas = [
@@ -1366,6 +1415,7 @@ def on_message(c: NewClient, message: MessageEv):
                 "- .apagar / .del : apaga a mensagem marcada para todos no grupo",
                 "- .mute / .mutar [tempo] : apaga mensagens do alvo silenciosamente (padrao 5m)",
                 "- .unmute / .desmutar : remove o mute do usuario no grupo",
+                "- .clear / .limparmsgs [numero] : apaga mensagens recentes do usuario no grupo",
                 "- .sudo [numero] : da permissao de usar comandos de adm de grupo",
                 "- .unsudo / .nosudo [numero] : remove superpoderes do usuario",
                 "- .logs : envia as ultimas 20 linhas do bot.log no seu privado",
@@ -1666,6 +1716,13 @@ def on_message(c: NewClient, message: MessageEv):
                     except Exception:
                         pass
         return
+
+    # Registra ID leve da mensagem no grupo para o comando .clear
+    if is_group:
+        with history_lock:
+            if chat.User not in group_msg_history:
+                group_msg_history[chat.User] = deque(maxlen=500)
+            group_msg_history[chat.User].append((msg_id, JIDToNonAD(sender), sender_number, sender.User))
 
     # 9. Cache do Anti-Delete e Anti-Edit: ignora grupos se o monitoramento nao estiver ativo
     if not monitorar_conversa:
